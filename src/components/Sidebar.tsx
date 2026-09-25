@@ -1,19 +1,20 @@
 
 'use client';
 import React, { useState } from 'react';
-import { Box, List, ListItem, ListItemText, Divider, ListItemButton, Collapse, FormControl, InputLabel, Select, MenuItem, SelectChangeEvent, Tooltip } from '@mui/material';
+import { Box, List, ListItem, ListItemText, Divider, ListItemButton, Collapse, FormControl, InputLabel, Select, MenuItem, SelectChangeEvent, Tooltip, CircularProgress } from '@mui/material';
 import { ExpandLess, ExpandMore } from '@mui/icons-material';
+import { useCourse } from '@/context/CourseContext';
 
 const Sidebar = () => {
   const [openSettings, setOpenSettings] = useState(false);
-  const [course, setCourse] = useState('react');
+  const { courses, courseId, setCourseId, loading } = useCourse();
 
   const handleSettingsClick = () => {
     setOpenSettings(!openSettings);
   };
 
   const handleCourseChange = (event: SelectChangeEvent) => {
-    setCourse(event.target.value as string);
+    setCourseId(event.target.value);
   };
 
   return (
@@ -43,20 +44,25 @@ const Sidebar = () => {
         <Collapse in={openSettings} timeout="auto" unmountOnExit>
           <List component="div" disablePadding>
             <ListItem sx={{ pl: 4, pr: 2, pb: 2 }}>
-               <FormControl fullWidth size="small">
+               <FormControl fullWidth size="small" disabled={loading || courses.length === 0}>
                 <InputLabel id="course-select-label">Course</InputLabel>
                 <Select
                   labelId="course-select-label"
                   id="course-select"
-                  value={course}
+                  value={courseId ?? ''}
                   label="Course"
                   onChange={handleCourseChange}
                 >
-                  <MenuItem value="react">CS101: Introduction to React</MenuItem>
-                  <MenuItem value="js">CS201: Advanced JavaScript</MenuItem>
-                  <MenuItem value="web">CS301: Web Development Bootcamp</MenuItem>
-                  <MenuItem value="dsa">CS401: Data Structures & Algorithms</MenuItem>
-                  <MenuItem value="uiux">DES101: UI/UX Design Fundamentals</MenuItem>
+                  {loading && (
+                    <MenuItem value="">
+                      <CircularProgress size={18} />
+                    </MenuItem>
+                  )}
+                  {courses.map((course) => (
+                    <MenuItem key={course.id} value={String(course.id)}>
+                      {course.name}
+                    </MenuItem>
+                  ))}
                 </Select>
               </FormControl>
             </ListItem>

@@ -1,31 +1,20 @@
-
 'use client';
 import React from 'react';
 import { Bar } from 'react-chartjs-2';
 import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend } from 'chart.js';
-import { gradesData } from '@/data/grades';
-import { assessmentsData } from '@/data/assessments';
 import { Box, Typography, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper } from '@mui/material';
+import { useCourseData } from '@/hooks/useCourseData';
+import { TabLoader } from '@/components/CourseDataState';
+import type { CourseGradesPayload, AssessmentGradeRow } from '@/lib/canvas/grades';
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend);
 
-const CourseGrade = () => {
-  const options = {
-    responsive: true,
-    plugins: {
-      legend: {
-        position: 'top' as const,
-      },
-      title: {
-        display: true,
-        text: 'Course Grade Distribution',
-      },
-    },
-  };
-
-  const renderAssessmentTable = (assessments: any[], title: string) => (
-    <Box sx={{ mt: 4 }}>
-      <Typography variant="h6" gutterBottom>{title}</Typography>
+const renderAssessmentTable = (assessments: AssessmentGradeRow[], title: string) => (
+  <Box sx={{ mt: 4 }}>
+    <Typography variant="h6" gutterBottom>{title}</Typography>
+    {assessments.length === 0 ? (
+      <Typography color="text.secondary">No assignments in this group.</Typography>
+    ) : (
       <TableContainer component={Paper}>
         <Table>
           <TableHead>
@@ -54,14 +43,43 @@ const CourseGrade = () => {
           </TableBody>
         </Table>
       </TableContainer>
-    </Box>
-  );
+    )}
+  </Box>
+);
+
+const CourseGrade = () => {
+  const { data, loading, error } = useCourseData<CourseGradesPayload>('grades');
+
+  const options = {
+    responsive: true,
+    plugins: {
+      legend: { position: 'top' as const },
+      title: { display: true, text: 'Course Grade Distribution (current scores)' },
+    },
+  };
+
+  if (loading || error) {
+    return <TabLoader loading={loading} error={error} />;
+  }
+
+  if (!data) return null;
+
+  const chartData = {
+    labels: data.distribution.labels,
+    datasets: [
+      {
+        label: 'Number of Students',
+        data: data.distribution.counts,
+        backgroundColor: 'rgba(75, 192, 192, 0.6)',
+      },
+    ],
+  };
 
   return (
     <Box>
-      <Bar options={options} data={gradesData} />
-      {renderAssessmentTable(assessmentsData.formative, 'Formative Assessments')}
-      {renderAssessmentTable(assessmentsData.summative, 'Summative Assessments')}
+      <Bar options={options} data={chartData} />
+      {renderAssessmentTable(data.formative, 'Formative Assessments')}
+      {renderAssessmentTable(data.summative, 'Summative Assessments')}
     </Box>
   );
 };

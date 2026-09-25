@@ -1,36 +1,41 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# LADS Agent Demo — Course Analytics
 
-## Getting Started
+Learning Analytics Data Storytelling (LADS) demo dashboard powered by **Canvas LMS** via a Next.js server-side BFF (Canvas REST API). No canvas-mcp dependency in the app runtime.
 
-First, run the development server:
+## Setup
+
+1. Install dependencies:
+
+```bash
+npm install
+```
+
+2. Copy [canvas.env.template](./canvas.env.template) to `.env.local` and set:
+
+- `CANVAS_API_URL` — must include `/api/v1` (e.g. `https://canvas.instructure.com/api/v1`)
+- `CANVAS_API_TOKEN` — instructor or TA token with roster, gradebook, and analytics access
+
+3. Run the dev server:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000). Choose a course under **Settings** in the sidebar.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Data sources by tab
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+| Tab | Canvas APIs |
+|-----|-------------|
+| Course Grade | Enrollments (current scores), assignment submissions |
+| Weekly Online Activity | Course activity stream + submission timestamps (weekly buckets); resource table from assignments & module items |
+| Students | `analytics/student_summaries`, enrollments, roster |
+| Discussions | Discussion topics and entries (network built from reply relationships) |
 
-## Learn More
+**Weekly activity note:** Canvas does not expose the same weekly page-view series as the original mock UI on the public REST API. This app buckets the **course activity feed** and **submission dates** into 16 weeks from the course start date, and documents the proxy in the UI.
 
-To learn more about Next.js, take a look at the following resources:
+## Scripts
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- `npm run dev` — development
+- `npm run build` — production build
+- `npm run start` — production server
