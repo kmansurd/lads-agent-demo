@@ -87,7 +87,7 @@ export async function fetchAllPages<T>(
     for (const [key, value] of Object.entries(searchParams)) {
       if (value === undefined) continue;
       if (Array.isArray(value)) {
-        for (const v of value) urlAppend(firstUrl, key, v);
+        for (const v of value) firstUrl.searchParams.append(key, v);
       } else {
         firstUrl.searchParams.set(key, value);
       }
@@ -126,16 +126,13 @@ export async function fetchAllPages<T>(
   return results;
 }
 
-function urlAppend(url: URL, key: string, value: string) {
-  url.searchParams.append(key, value);
-}
-
 export async function mapPool<T, R>(
   items: T[],
   concurrency: number,
   fn: (item: T) => Promise<R>,
 ): Promise<R[]> {
-  const results: R[] = [];
+  if (items.length === 0) return [];
+  const results: R[] = new Array(items.length);
   let index = 0;
 
   async function worker() {
@@ -145,6 +142,8 @@ export async function mapPool<T, R>(
     }
   }
 
-  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, () => worker()));
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, items.length) }, () => worker()),
+  );
   return results;
 }

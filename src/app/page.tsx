@@ -110,7 +110,10 @@ function Dashboard() {
           </TabPanel>
         </CourseShell>
       </Box>
-      <ChatBubble ref={chatRef} currentTab={["Course Grade", "Weekly Online Activity", "Students", "Discussions"][value]} />
+      <ChatBubble
+        ref={chatRef}
+        currentTab={['Course Grade', 'Weekly Online Activity', 'Students', 'Discussions'][value]}
+      />
     </Box>
   );
 }

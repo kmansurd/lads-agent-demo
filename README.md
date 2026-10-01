@@ -1,6 +1,6 @@
 # LADS Agent Demo — Course Analytics
 
-Learning Analytics Data Storytelling (LADS) demo dashboard powered by **Canvas LMS** via a Next.js server-side BFF (Canvas REST API). No canvas-mcp dependency in the app runtime.
+Learning Analytics Data Storytelling (LADS) demo dashboard powered by **Canvas LMS** via a Next.js server-side BFF (Canvas REST API).
 
 ## Setup
 
@@ -28,11 +28,11 @@ Open [http://localhost:3000](http://localhost:3000). Choose a course under **Set
 | Tab | Canvas APIs |
 |-----|-------------|
 | Course Grade | Enrollments (current scores), assignment submissions |
-| Weekly Online Activity | Course activity stream + submission timestamps (weekly buckets); resource table from assignments & module items |
+| Weekly Online Activity | Canvas Analytics `…/analytics/activity` (daily → course/term weeks); resources from published module items + assignment analytics + per-student analytics/page views |
 | Students | `analytics/student_summaries`, enrollments, roster |
 | Discussions | Discussion topics and entries (network built from reply relationships) |
 
-**Weekly activity note:** Canvas does not expose the same weekly page-view series as the original mock UI on the public REST API. This app buckets the **course activity feed** and **submission dates** into 16 weeks from the course start date, and documents the proxy in the UI.
+**Weekly activity note:** Weeks follow Canvas course or enrollment term dates when set. The resources table lists published module content; metrics combine Canvas assignment analytics with per-student participation and page-view history (large rosters sample page views for performance).
 
 ## Scripts
 

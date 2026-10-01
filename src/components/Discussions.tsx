@@ -11,8 +11,6 @@ const DiscussionNetwork = dynamic(() => import('./DiscussionNetwork'), {
   loading: () => <p>Loading network...</p>,
 });
 
-type DiscussionsResponse = { discussions: DiscussionListItem[] };
-
 const Discussions = () => {
   const { courseId } = useCourse();
   const [list, setList] = useState<DiscussionListItem[]>([]);
