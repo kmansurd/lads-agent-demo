@@ -7,14 +7,10 @@
  * from canvas.ts or mock.ts.
  */
 
-import { getDataSource, isCanvasConfigured } from '@/lib/config';
 import { getMockCourseAnalytics } from '@/lib/data/mock';
-import { getCanvasCourseAnalytics } from '@/lib/data/canvas';
 import type { CourseAnalytics } from '@/types/analytics';
 
+/** @deprecated Prefer `/api/courses/[courseId]/*` tab routes; kept for legacy `/api/analytics`. */
 export async function getCourseAnalytics(): Promise<CourseAnalytics> {
-  if (getDataSource() === 'canvas' && isCanvasConfigured()) {
-    return getCanvasCourseAnalytics();
-  }
   return getMockCourseAnalytics();
 }

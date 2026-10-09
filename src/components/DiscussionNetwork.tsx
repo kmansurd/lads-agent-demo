@@ -39,13 +39,8 @@ const style = {
 
 const DiscussionNetwork = ({ data }: { data: GraphData }) => {
   const [selectedNode, setSelectedNode] = useState<CustomNode | null>(null);
-<<<<<<< HEAD
-  const graphRef = useRef<ForceGraphMethods>(undefined);
-  const containerRef = useRef<HTMLDivElement | null>(null);
-=======
   const graphRef = useRef<ForceGraphMethods | undefined>(undefined);
   const containerRef = useRef<HTMLDivElement>(null);
->>>>>>> f4f4d815f8d08b8dc851a517ed49c7a7e2e57157
   const [width, height] = useSize(containerRef as React.RefObject<HTMLElement>);
 
   const handleNodeClick = useCallback((node: NodeObject) => {

@@ -20,7 +20,7 @@ export async function GET(request: Request, { params }: Params) {
       const total = grades.distribution.counts.reduce((a, b) => a + b, 0);
       const [a, b, , d, f] = grades.distribution.counts;
       return NextResponse.json({
-        summary: `Course grade distribution (${total} students with scores): ${a} earned A, ${b} earned B, ${d} earned D, ${f} earned F. Review summative assessments for items with heavy D/F counts.`,
+        summary: `Course grade distribution (${total} students with scores): ${a} earned A, ${b} earned B, ${d} earned D, ${f} earned F. Review assessments with heavy F counts (often missing submissions).`,
       });
     }
 
