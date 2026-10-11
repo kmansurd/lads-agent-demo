@@ -1,4 +1,6 @@
+import { timeOfDayFromHistogram, type TimeOfDayPattern } from './activityPatterns';
 import { CanvasApiError, fetchAllPages, mapPool } from './client';
+import { collectTimeOfDayForStudents } from './studentActivityRollup';
 import type { CourseContentRow } from './courseContentCatalog';
 import { courseHasViewStatistics } from './coursePermissions';
 import { applyParticipationViewsForDateRange } from './engagementPeriodParticipationViews';
@@ -41,15 +43,11 @@ function viewInRange(
 }
 
 async function loadStudentIds(courseId: string): Promise<number[]> {
-  const ids = new Set<number>();
-  const enrollments = await fetchAllPages<{ user_id?: number }>(
-    `/courses/${courseId}/enrollments`,
-    { 'type[]': 'StudentEnrollment', 'state[]': ['active', 'invited', 'completed'] },
-  ).catch(() => []);
-  for (const e of enrollments) {
-    if (e.user_id != null) ids.add(Number(e.user_id));
-  }
-  return [...ids];
+  const users = await fetchAllPages<{ id: number }>(`/courses/${courseId}/users`, {
+    'enrollment_type[]': 'student',
+    'enrollment_state[]': ['active', 'invited', 'completed'],
+  }).catch(() => []);
+  return users.map((u) => u.id);
 }
 
 async function fetchUserPageViewsInCourse(
@@ -71,7 +69,9 @@ async function fetchUserPageViewsInCourse(
   }
 }
 
-export type PageViewPeriodSource = 'page_view_logs' | 'analytics_participations';
+export type PageViewPeriodSource =
+  | 'page_view_logs'
+  | 'analytics_participations';
 
 export type PageViewPeriodResult = {
   available: boolean;
@@ -79,6 +79,9 @@ export type PageViewPeriodResult = {
   viewsMatched: number;
   source: PageViewPeriodSource;
   viewStatisticsPermission: boolean;
+  /** Sum of hourly analytics page views for scanned students in range (UBC-style). */
+  totalHourlyPageViewsInRange: number;
+  timeOfDay: TimeOfDayPattern;
 };
 
 /**
@@ -100,11 +103,13 @@ export async function applyPageViewsForDateRange(
       end,
     );
     return {
-      available: fallback.viewsMatched > 0,
+      available: fallback.viewsMatched > 0 || fallback.totalHourlyPageViewsInRange > 0,
       studentsScanned: fallback.studentsScanned,
       viewsMatched: fallback.viewsMatched,
       source: 'analytics_participations',
       viewStatisticsPermission: false,
+      totalHourlyPageViewsInRange: fallback.totalHourlyPageViewsInRange,
+      timeOfDay: fallback.timeOfDay,
     };
   }
 
@@ -120,6 +125,8 @@ export async function applyPageViewsForDateRange(
       viewsMatched: 0,
       source: 'page_view_logs',
       viewStatisticsPermission: true,
+      totalHourlyPageViewsInRange: 0,
+      timeOfDay: timeOfDayFromHistogram([], 0),
     };
   }
 
@@ -163,11 +170,13 @@ export async function applyPageViewsForDateRange(
       end,
     );
     return {
-      available: fallback.viewsMatched > 0,
+      available: fallback.viewsMatched > 0 || fallback.totalHourlyPageViewsInRange > 0,
       studentsScanned: fallback.studentsScanned,
       viewsMatched: fallback.viewsMatched,
       source: 'analytics_participations',
       viewStatisticsPermission: true,
+      totalHourlyPageViewsInRange: fallback.totalHourlyPageViewsInRange,
+      timeOfDay: fallback.timeOfDay,
     };
   }
 
@@ -180,11 +189,15 @@ export async function applyPageViewsForDateRange(
     }
   }
 
+  const timeOfDay = await collectTimeOfDayForStudents(courseId, capped, start, end);
+
   return {
     available: true,
     studentsScanned: capped.length,
     viewsMatched,
     source: 'page_view_logs',
     viewStatisticsPermission: true,
+    totalHourlyPageViewsInRange: timeOfDay.totalViews,
+    timeOfDay,
   };
 }

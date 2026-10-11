@@ -5,171 +5,231 @@ import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, Title, Toolti
 import {
   Box,
   Typography,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
-  Paper,
   Alert,
   FormControl,
   InputLabel,
   Select,
   MenuItem,
-  Button,
   Card,
   CardContent,
   Grid,
 } from '@mui/material';
 import { useCourseData } from '@/hooks/useCourseData';
+import { useCourse } from '@/context/CourseContext';
 import { TabLoader } from '@/components/CourseDataState';
 import { TabDataSourceFooter } from '@/components/TabDataSourceFooter';
 import { useCourseCapabilities } from '@/hooks/useCourseCapabilities';
-import type { CourseGradesPayload, AssessmentGradeRow } from '@/lib/canvas/grades';
-import { gradeCountsForChart, partitionAssessments } from '@/lib/canvas/assessmentDisplay';
+import { AssignmentRubricPanel } from '@/components/AssignmentRubricPanel';
+import { AssessmentGradeTable } from '@/components/AssessmentGradeTable';
+import { RubricRatingMap } from '@/components/RubricRatingMap';
+import type { CourseGradesPayload, GradebookRating } from '@/lib/canvas/grades';
+import type { AssignmentRubricDetail } from '@/lib/canvas/assignmentRubric';
+import type { LetterBucket } from '@/lib/canvas/letterScale';
+import { assessmentsForGradebook } from '@/lib/canvas/assessmentDisplay';
+import {
+  LETTERS,
+  assignmentUsesMatch,
+  binScores,
+  collectRanges,
+  courseCriteria,
+  emptyMatch,
+  letterColumnCounts,
+  mappingRatings,
+  overallLetterCounts,
+  overallPercentCounts,
+  percentColumnCounts,
+  ratingIdentityKey,
+  type GradeScale,
+  type RatingMatchMap,
+} from '@/lib/canvas/rubricMapping';
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend);
 
 const OVERALL_CHART_VALUE = 'overall';
+const MATCH_STORAGE_PREFIX = 'lads-gradebook-rating-map:';
 
-function AssessmentTableRows({ rows }: { rows: AssessmentGradeRow[] }) {
-  return (
-    <>
-      {rows.map((assessment) => (
-        <TableRow key={assessment.id}>
-          <TableCell component="th" scope="row">
-            {assessment.name}
-            {assessment.usesRubric ? (
-              <Typography component="span" variant="caption" color="text.secondary" sx={{ ml: 1 }}>
-                (rubric)
-              </Typography>
-            ) : null}
-          </TableCell>
-          <TableCell align="right">{assessment.weighting}</TableCell>
-          <TableCell align="right">{assessment.grades.A}</TableCell>
-          <TableCell align="right">{assessment.grades.B}</TableCell>
-          <TableCell align="right">{assessment.grades.C}</TableCell>
-          <TableCell align="right">{assessment.grades.D}</TableCell>
-          <TableCell align="right">{assessment.grades.F}</TableCell>
-          <TableCell align="right">{assessment.notGraded}</TableCell>
-          <TableCell align="right">{assessment.submissionStatus.submitted}</TableCell>
-          <TableCell align="right">{assessment.submissionStatus.late}</TableCell>
-          <TableCell align="right">{assessment.submissionStatus.missing}</TableCell>
-          <TableCell align="right">{assessment.submissionStatus.excused}</TableCell>
-        </TableRow>
-      ))}
-    </>
-  );
+function readStoredMatch(courseId: string): {
+  scale: GradeScale;
+  matches: RatingMatchMap;
+  hiddenKeys: string[];
+  addedRatings: GradebookRating[];
+} | null {
+  try {
+    const raw = localStorage.getItem(MATCH_STORAGE_PREFIX + courseId);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as {
+      scale?: string;
+      matches?: RatingMatchMap;
+      hiddenKeys?: unknown;
+      addedRatings?: unknown;
+    };
+    const scale: GradeScale = parsed.scale === 'percent' ? 'percent' : 'letter';
+    const matches: RatingMatchMap = {};
+    for (const [key, value] of Object.entries(parsed.matches ?? {})) {
+      if (!value || typeof value !== 'object') continue;
+      const letter = LETTERS.includes(value.letter as LetterBucket) ? (value.letter as LetterBucket) : '';
+      matches[key] = {
+        letter,
+        start: typeof value.start === 'string' ? value.start : '',
+        end: typeof value.end === 'string' ? value.end : '',
+      };
+    }
+    const hiddenKeys = Array.isArray(parsed.hiddenKeys)
+      ? parsed.hiddenKeys.filter((key): key is string => typeof key === 'string' && key.length > 0)
+      : [];
+    const addedRatings = Array.isArray(parsed.addedRatings)
+      ? parsed.addedRatings.flatMap((item) => {
+          if (!item || typeof item !== 'object') return [];
+          const label = typeof (item as { label?: unknown }).label === 'string' ? (item as { label: string }).label.trim() : '';
+          const key = ratingIdentityKey(label);
+          if (!key) return [];
+          return [{ key, label, points: null }];
+        })
+      : [];
+    for (const key of hiddenKeys) delete matches[key];
+    return { scale, matches, hiddenKeys, addedRatings };
+  } catch {
+    return null;
+  }
 }
 
-const AssessmentTable = ({
-  featured,
-  other,
-}: {
-  featured: AssessmentGradeRow[];
-  other: AssessmentGradeRow[];
-}) => {
-  const [showMore, setShowMore] = useState(false);
-  const hiddenCount = other.length;
-
-  return (
-    <Box sx={{ mt: 4 }}>
-      <Typography variant="h6" gutterBottom>
-        Assessments
-      </Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        Rubric assignments with a clear % weight are listed first. A–F counts require a clear grade;
-        submission columns use Canvas submission state (on time, late, missing, excused).
-      </Typography>
-      {featured.length === 0 && hiddenCount === 0 ? (
-        <Typography color="text.secondary">No published assignments.</Typography>
-      ) : (
-        <>
-          <TableContainer component={Paper}>
-            <Table size="small">
-              <TableHead>
-                <TableRow>
-                  <TableCell>Assessment</TableCell>
-                  <TableCell align="right">Weighting</TableCell>
-                  <TableCell align="right">A</TableCell>
-                  <TableCell align="right">B</TableCell>
-                  <TableCell align="right">C</TableCell>
-                  <TableCell align="right">D</TableCell>
-                  <TableCell align="right">F</TableCell>
-                  <TableCell align="right">Not graded</TableCell>
-                  <TableCell align="right">Submitted</TableCell>
-                  <TableCell align="right">Late</TableCell>
-                  <TableCell align="right">Missing</TableCell>
-                  <TableCell align="right">Excused</TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {featured.length > 0 ? (
-                  <AssessmentTableRows rows={featured} />
-                ) : (
-                  <TableRow>
-                    <TableCell colSpan={12}>
-                      <Typography variant="body2" color="text.secondary">
-                        No rubric assignments with clear weighting — use View more to see all
-                        assessments.
-                      </Typography>
-                    </TableCell>
-                  </TableRow>
-                )}
-                {showMore && hiddenCount > 0 && <AssessmentTableRows rows={other} />}
-              </TableBody>
-            </Table>
-          </TableContainer>
-          {hiddenCount > 0 && (
-            <Box sx={{ mt: 1, display: 'flex', justifyContent: 'flex-end' }}>
-              <Button size="small" onClick={() => setShowMore((v) => !v)}>
-                {showMore ? 'Show fewer' : `View more (${hiddenCount})`}
-              </Button>
-            </Box>
-          )}
-        </>
-      )}
-    </Box>
-  );
-};
-
 const CourseGrade = () => {
+  const { courseId } = useCourse();
   const { data, loading, error, fetchedAt } = useCourseData<CourseGradesPayload>('grades');
   const { capabilities } = useCourseCapabilities();
   const [chartSelection, setChartSelection] = useState<string>(OVERALL_CHART_VALUE);
+  const [rubricDetail, setRubricDetail] = useState<AssignmentRubricDetail | null>(null);
+  const [rubricLoading, setRubricLoading] = useState(false);
+  const [scale, setScale] = useState<GradeScale>('letter');
+  const [matches, setMatches] = useState<RatingMatchMap>({});
+  const [hiddenKeys, setHiddenKeys] = useState<string[]>([]);
+  const [addedRatings, setAddedRatings] = useState<GradebookRating[]>([]);
+  const [matchReady, setMatchReady] = useState(false);
 
-  const { featured, other } = useMemo(
-    () => partitionAssessments(data?.assessments ?? []),
+  const assessments = useMemo(
+    () =>
+      assessmentsForGradebook(data?.assessments ?? []).map((row) => ({
+        ...row,
+        criteria: row.criteria ?? [],
+        outcomes: row.outcomes ?? [],
+      })),
     [data?.assessments],
   );
+  const criteria = useMemo(() => courseCriteria(assessments), [assessments]);
+  const ratings = useMemo(() => {
+    const hidden = new Set(hiddenKeys);
+    const source = mappingRatings(criteria).filter((rating) => !hidden.has(rating.key));
+    const known = new Set(source.map((rating) => rating.key));
+    const extra = addedRatings.filter((rating) => !hidden.has(rating.key) && !known.has(rating.key));
+    return [...source, ...extra];
+  }, [addedRatings, criteria, hiddenKeys]);
+  const ranges = useMemo(() => collectRanges(matches), [matches]);
+
+  useEffect(() => {
+    if (!courseId) return;
+    const stored = readStoredMatch(courseId);
+    setScale(stored?.scale ?? 'letter');
+    setMatches(stored?.matches ?? {});
+    setHiddenKeys(stored?.hiddenKeys ?? []);
+    setAddedRatings(stored?.addedRatings ?? []);
+    setMatchReady(true);
+  }, [courseId]);
+
+  useEffect(() => {
+    if (!courseId || !matchReady) return;
+    localStorage.setItem(
+      MATCH_STORAGE_PREFIX + courseId,
+      JSON.stringify({ scale, matches, hiddenKeys, addedRatings }),
+    );
+  }, [addedRatings, courseId, hiddenKeys, matchReady, matches, scale]);
 
   useEffect(() => {
     if (chartSelection === OVERALL_CHART_VALUE) return;
-    if (!featured.some((a) => String(a.id) === chartSelection)) {
+    if (!assessments.some((a) => String(a.id) === chartSelection)) {
       setChartSelection(OVERALL_CHART_VALUE);
     }
-  }, [featured, chartSelection]);
+  }, [assessments, chartSelection]);
+
+  useEffect(() => {
+    if (!courseId || chartSelection === OVERALL_CHART_VALUE) {
+      setRubricDetail(null);
+      setRubricLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setRubricDetail(null);
+    setRubricLoading(true);
+    fetch(`/api/courses/${courseId}/grades/assignments/${chartSelection}`)
+      .then(async (res) => {
+        const body = await res.json();
+        if (!res.ok) throw new Error(body.error ?? 'Failed to load rubric');
+        if (!cancelled) setRubricDetail(body as AssignmentRubricDetail);
+      })
+      .catch(() => {
+        if (!cancelled) setRubricDetail(null);
+      })
+      .finally(() => {
+        if (!cancelled) setRubricLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [courseId, chartSelection]);
 
   const selectedAssessment = useMemo(
-    () => featured.find((a) => String(a.id) === chartSelection),
-    [featured, chartSelection],
+    () => assessments.find((a) => String(a.id) === chartSelection),
+    [assessments, chartSelection],
   );
+
+  const overallLetters = useMemo(
+    () => (scale === 'letter' ? overallLetterCounts(assessments, matches) : null),
+    [assessments, matches, scale],
+  );
+  const overallPercents = useMemo(
+    () => (scale === 'percent' ? overallPercentCounts(assessments, matches, ranges) : null),
+    [assessments, matches, ranges, scale],
+  );
+
+  const chartModel = useMemo(() => {
+    if (!data) return { labels: [] as string[], counts: [] as number[] };
+    if (chartSelection === OVERALL_CHART_VALUE) {
+      if (scale === 'percent') {
+        return {
+          labels: ranges.map((range) => range.label),
+          counts: overallPercents?.counts ?? binScores(data.distribution.scores ?? [], ranges),
+        };
+      }
+      return {
+        labels: [...LETTERS],
+        counts: overallLetters?.counts ?? data.distribution.counts,
+      };
+    }
+    if (!selectedAssessment) return { labels: [] as string[], counts: [] as number[] };
+    if (scale === 'percent') {
+      return {
+        labels: ranges.map((range) => range.label),
+        counts: percentColumnCounts(selectedAssessment, matches, ranges).counts,
+      };
+    }
+    return {
+      labels: [...LETTERS],
+      counts: letterColumnCounts(selectedAssessment, matches).counts,
+    };
+  }, [chartSelection, data, matches, overallLetters, overallPercents, ranges, scale, selectedAssessment]);
+
+  const usingMatch =
+    selectedAssessment != null && assignmentUsesMatch(selectedAssessment, matches, scale);
 
   const chartTitle =
     chartSelection === OVERALL_CHART_VALUE
-      ? 'Grade distribution — Overall (Canvas gradebook current grade)'
+      ? scale === 'percent'
+        ? 'Grade distribution — Overall (weighted percentage from your ranges)'
+        : 'Grade distribution — Overall (weighted letter from your match)'
       : `Grade distribution — ${selectedAssessment?.name ?? 'Assessment'}`;
-
-  const chartCounts =
-    chartSelection === OVERALL_CHART_VALUE
-      ? data?.distribution.counts ?? []
-      : selectedAssessment
-        ? gradeCountsForChart(selectedAssessment)
-        : [];
 
   const chartOptions = {
     responsive: true,
+    maintainAspectRatio: false,
     plugins: {
       legend: { position: 'top' as const },
       title: { display: true, text: chartTitle },
@@ -183,20 +243,29 @@ const CourseGrade = () => {
   if (!data) return null;
 
   const chartData = {
-    labels: data.distribution.labels,
+    labels: chartModel.labels,
     datasets: [
       {
         label: 'Students',
-        data: chartCounts,
+        data: chartModel.counts,
         backgroundColor: 'rgba(75, 192, 192, 0.6)',
+        maxBarThickness: 64,
+        categoryPercentage: 0.7,
+        barPercentage: 0.85,
       },
     ],
   };
 
   const { kpi } = data;
+  const selectedNotGraded =
+    selectedAssessment == null
+      ? 0
+      : scale === 'percent'
+        ? percentColumnCounts(selectedAssessment, matches, ranges).notGraded
+        : letterColumnCounts(selectedAssessment, matches).notGraded;
 
   return (
-    <Box>
+    <Box sx={{ minWidth: 0, maxWidth: '100%' }}>
       <Grid container spacing={2} sx={{ mb: 3 }}>
         <Grid size={{ xs: 12, sm: 6, md: 3 }}>
           <Card variant="outlined">
@@ -245,7 +314,7 @@ const CourseGrade = () => {
               </Typography>
               <Typography variant="h5">
                 {
-                  data.assessments.filter(
+                  assessments.filter(
                     (row) => row.submissionStatus.missing > row.submissionStatus.submitted,
                   ).length
                 }
@@ -257,15 +326,49 @@ const CourseGrade = () => {
 
       <Alert severity="info" sx={{ mb: 2 }}>
         {chartSelection === OVERALL_CHART_VALUE ? (
+          scale === 'percent' ? (
+            <>
+              Overall chart weights each student&apos;s assignment percentages by the weighting
+              column, then places that score in the ranges you set. Rubric assignments use the
+              matched ranges. {overallPercents?.graded ?? 0} students fall in a range
+              {overallPercents && overallPercents.outside > 0
+                ? `, and ${overallPercents.outside} fall outside them`
+                : ''}
+              .
+            </>
+          ) : (
+            <>
+              Overall chart weights each student&apos;s assignment letters by the weighting column.
+              Rubric assignments use the letters you matched. Assignments that are not graded, or
+              not in the final grade, are left out. {overallLetters?.graded ?? data.distribution.studentsWithGrade}{' '}
+              students have a grade.
+            </>
+          )
+        ) : usingMatch ? (
+          scale === 'percent' ? (
+            <>
+              This chart counts students from the percentage ranges you matched to ratings.{' '}
+              {selectedNotGraded} are outside those ranges or have no matched rating.
+            </>
+          ) : (
+            <>
+              This chart counts students from the letters you matched to ratings. A student with
+              several ratings is counted under the points-weighted letter. {selectedNotGraded} not
+              graded from that match.
+            </>
+          )
+        ) : scale === 'percent' ? (
           <>
-            Overall chart uses each student&apos;s <strong>current grade</strong> from the Canvas
-            gradebook ({data.distribution.studentsWithGrade} students with a score).
+            {selectedAssessment?.usesRubric
+              ? 'Match this assignment’s ratings to percentage ranges to plot them.'
+              : 'This assignment has no rubric. Set percentage ranges above and the chart uses the posted score.'}{' '}
+            {selectedNotGraded} not in a range yet.
           </>
         ) : (
           <>
-            Assignment chart counts only students with a <strong>clear grade</strong> on this item
-            (rubric or posted score). {selectedAssessment?.notGraded ?? 0} not graded on this
-            assignment.
+            Assignment chart counts students with a <strong>clear posted grade</strong>.{' '}
+            {selectedNotGraded} not graded. Match the ratings below to count rubric assignments from
+            those ratings instead.
           </>
         )}
       </Alert>
@@ -279,19 +382,71 @@ const CourseGrade = () => {
           onChange={(e) => setChartSelection(e.target.value)}
         >
           <MenuItem value={OVERALL_CHART_VALUE}>Overall</MenuItem>
-          {featured.map((a) => (
+          {assessments.map((a) => (
             <MenuItem key={a.id} value={String(a.id)}>
               {a.name}
+              {a.usesRubric ? ' (rubric)' : ''}
             </MenuItem>
           ))}
         </Select>
       </FormControl>
 
-      <Bar options={chartOptions} data={chartData} />
+      <RubricRatingMap
+        ratings={ratings}
+        scale={scale}
+        matches={matches}
+        onScale={setScale}
+        onMatch={(ratingKey, patch) => {
+          setMatches((current) => ({
+            ...current,
+            [ratingKey]: { ...emptyMatch(), ...current[ratingKey], ...patch },
+          }));
+        }}
+        onRemove={(ratingKey) => {
+          setHiddenKeys((current) => (current.includes(ratingKey) ? current : [...current, ratingKey]));
+          setAddedRatings((current) => current.filter((rating) => rating.key !== ratingKey));
+          setMatches((current) => {
+            if (!(ratingKey in current)) return current;
+            const next = { ...current };
+            delete next[ratingKey];
+            return next;
+          });
+        }}
+        onAdd={(label) => {
+          const trimmed = label.replace(/\s+/g, ' ').trim();
+          const key = ratingIdentityKey(trimmed);
+          if (!key) return;
+          setHiddenKeys((current) => current.filter((item) => item !== key));
+          setAddedRatings((current) => {
+            const fromCourse = mappingRatings(criteria).some((rating) => rating.key === key);
+            if (fromCourse || current.some((rating) => rating.key === key)) return current;
+            return [...current, { key, label: trimmed, points: null }];
+          });
+        }}
+      />
+
+      {chartModel.labels.length > 0 ? (
+        <Box sx={{ position: 'relative', width: '100%', maxWidth: '100%', height: 360 }}>
+          <Bar options={chartOptions} data={chartData} />
+        </Box>
+      ) : (
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          Set the start and end of a percentage range to see the chart.
+        </Typography>
+      )}
+      {chartSelection !== OVERALL_CHART_VALUE ? (
+        <AssignmentRubricPanel detail={rubricDetail} loading={rubricLoading} />
+      ) : null}
       <Typography variant="caption" display="block" color="text.secondary" sx={{ mt: 1 }}>
         {data.weightingNote}
       </Typography>
-      <AssessmentTable featured={featured} other={other} />
+      <AssessmentGradeTable
+        rows={assessments}
+        scale={scale}
+        matches={matches}
+        criteria={criteria}
+        ranges={ranges}
+      />
       <TabDataSourceFooter
         sources={data.dataSources}
         fetchedAt={fetchedAt}

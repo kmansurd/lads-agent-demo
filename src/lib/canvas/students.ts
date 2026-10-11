@@ -1,4 +1,6 @@
 import { fetchAllPages } from './client';
+import { resolveEngagementRange, type EngagementRangeMeta } from './engagementRange';
+import { STUDENT_ACTIVITY_CAP, rollupStudentActivityInRange } from './studentActivityRollup';
 import { missingWorkFromSummary } from './studentTardiness';
 
 type StudentSummary = {
@@ -33,13 +35,42 @@ export type StudentRow = {
   name: string;
   grade: number | null;
   lastActivity: string;
-  pagesViewed: number;
+  /** Hourly analytics page views in the selected range (UBC method). Null if not scanned. */
+  pagesViewedInRange: number | null;
+  /** Course-lifetime page views from analytics/student_summaries. */
+  pagesViewedCourse: number;
+  /** Participation events in the selected range, excluding GraphQL noise. */
+  participationsInRange: number | null;
+  /** Days in range with at least one hourly page view. Null if not scanned. */
+  activeDays: number | null;
+  /** Page views divided by days in the selected range. */
+  avgDailyViews: number | null;
+  /** Days in range with no hourly page views. */
+  quietDays: number | null;
+  /** Longest run of days in range with no hourly page views. */
+  longestQuietDays: number | null;
+  /** Active days as a percent of days in the selected range. */
+  engagementRate: number | null;
+  /** Weekly page-view totals aligned to the selected range. Null if not scanned. */
+  weeklyViews: number[] | null;
+  /** Course-lifetime participations from analytics/student_summaries. */
   participations: number;
   missingWorkPct: number | null;
   missingWorkLabel: string;
 };
 
-export async function getCourseStudents(courseId: string): Promise<StudentRow[]> {
+export type CourseStudentsPayload = {
+  students: StudentRow[];
+  range: EngagementRangeMeta;
+  studentsScanned: number;
+  activityNote: string;
+};
+
+export async function getCourseStudents(
+  courseId: string,
+  options: { start?: string | null; end?: string | null; includeActivity?: boolean } = {},
+): Promise<CourseStudentsPayload> {
+  const { range, meta } = resolveEngagementRange(options.start, options.end);
   const [summaries, users, enrollments] = await Promise.all([
     fetchAllPages<StudentSummary>(`/courses/${courseId}/analytics/student_summaries`).catch(
       () => [] as StudentSummary[],
@@ -84,13 +115,58 @@ export async function getCourseStudents(courseId: string): Promise<StudentRow[]>
       name,
       grade: grade != null ? Math.round(grade) : null,
       lastActivity,
-      pagesViewed: summary?.page_views ?? 0,
+      pagesViewedInRange: null,
+      pagesViewedCourse: summary?.page_views ?? 0,
+      participationsInRange: null,
+      activeDays: null,
+      avgDailyViews: null,
+      quietDays: null,
+      longestQuietDays: null,
+      engagementRate: null,
+      weeklyViews: null,
       participations: summary?.participations ?? 0,
       missingWorkPct: missingWork.missingWorkPct,
       missingWorkLabel: missingWork.label,
     });
   }
 
+  const includeActivity = options.includeActivity !== false;
+  const scanOrder = [...rows].sort(
+    (a, b) => b.pagesViewedCourse - a.pagesViewedCourse || a.name.localeCompare(b.name),
+  );
+  const scanIds = includeActivity
+    ? scanOrder.slice(0, STUDENT_ACTIVITY_CAP).map((row) => row.id)
+    : [];
+  const rollup = includeActivity
+    ? await rollupStudentActivityInRange(courseId, scanIds, range.start, range.end)
+    : new Map();
+
+  for (const row of rows) {
+    const activity = rollup.get(row.id);
+    if (!activity) continue;
+    row.pagesViewedInRange = activity.pageViewsInRange;
+    row.participationsInRange = activity.participationsInRange;
+    row.activeDays = activity.activeDays;
+    row.avgDailyViews = activity.avgDailyViews;
+    row.quietDays = activity.quietDays;
+    row.longestQuietDays = activity.longestQuietDays;
+    row.engagementRate = activity.engagementRate;
+    row.weeklyViews = activity.weeklyViews;
+  }
+
   rows.sort((a, b) => a.name.localeCompare(b.name));
-  return rows;
+
+  const scanned = rollup.size;
+  const activityNote = !includeActivity
+    ? 'Course totals only.'
+    : scanned < rows.length
+      ? `Page views, active days, and quiet stretches use hourly Canvas Analytics for the ${scanned} students with the most course page views. Other rows show course totals only. Check students in the table to compare their weeks.`
+      : 'Page views, active days, and quiet stretches use hourly Canvas Analytics for every student. Check students in the table to compare their weeks.';
+
+  return {
+    students: rows,
+    range: meta,
+    studentsScanned: scanned,
+    activityNote,
+  };
 }

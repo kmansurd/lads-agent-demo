@@ -1,17 +1,12 @@
 'use client';
 import React, { useEffect, useState } from 'react';
-import dynamic from 'next/dynamic';
-import { Box, List, ListItem, ListItemButton, ListItemText, Typography, Paper, CircularProgress } from '@mui/material';
+import { Box, List, ListItem, ListItemButton, ListItemText, Typography, Paper } from '@mui/material';
 import { useCourse } from '@/context/CourseContext';
 import { TabLoader } from '@/components/CourseDataState';
 import { TabDataSourceFooter } from '@/components/TabDataSourceFooter';
 import { useCourseCapabilities } from '@/hooks/useCourseCapabilities';
-import type { DiscussionListItem, DiscussionGraph } from '@/lib/canvas/discussions';
-
-const DiscussionNetwork = dynamic(() => import('./DiscussionNetwork'), {
-  ssr: false,
-  loading: () => <p>Loading network...</p>,
-});
+import DiscussionEna from '@/components/DiscussionEna';
+import type { DiscussionListItem, DiscussionPost, DiscussionTopicStats } from '@/lib/canvas/discussions';
 
 const Discussions = () => {
   const { courseId } = useCourse();
@@ -20,8 +15,9 @@ const Discussions = () => {
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [detailSummary, setDetailSummary] = useState('');
-  const [graphData, setGraphData] = useState<DiscussionGraph | null>(null);
-  const [graphLoading, setGraphLoading] = useState(false);
+  const [posts, setPosts] = useState<DiscussionPost[]>([]);
+  const [stats, setStats] = useState<DiscussionTopicStats | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
   const [listFetchedAt, setListFetchedAt] = useState<Date | null>(null);
   const [dataSources, setDataSources] = useState<string[]>([]);
   const { capabilities } = useCourseCapabilities();
@@ -51,20 +47,26 @@ const Discussions = () => {
 
   useEffect(() => {
     if (!courseId || selectedId == null) {
-      setGraphData(null);
       setDetailSummary('');
+      setPosts([]);
+      setStats(null);
       return;
     }
-    setGraphLoading(true);
+    setDetailLoading(true);
     fetch(`/api/courses/${courseId}/discussions/${selectedId}`)
       .then(async (res) => {
         const body = await res.json();
         if (!res.ok) throw new Error(body.error ?? 'Failed to load discussion');
-        setGraphData(body.graphData);
         setDetailSummary(body.summary ?? '');
+        setPosts(body.posts ?? []);
+        setStats(body.stats ?? null);
       })
-      .catch(() => setGraphData({ nodes: [], links: [] }))
-      .finally(() => setGraphLoading(false));
+      .catch(() => {
+        setDetailSummary('');
+        setPosts([]);
+        setStats(null);
+      })
+      .finally(() => setDetailLoading(false));
   }, [courseId, selectedId]);
 
   if (loading || error) {
@@ -99,27 +101,68 @@ const Discussions = () => {
           ))}
         </List>
       </Box>
-      <Box sx={{ flexGrow: 1, p: 3, overflow: 'hidden' }}>
+      <Box sx={{ flexGrow: 1, p: 3, minWidth: 0 }}>
         {selected && (
           <>
-            <Paper elevation={3} sx={{ p: 2, mb: 3 }}>
-              <Typography variant="h6">Summary</Typography>
-              <Typography>{detailSummary || selected.summary}</Typography>
-            </Paper>
-            <Box sx={{ height: 500, border: '1px solid #ddd', borderRadius: 1, position: 'relative' }}>
-              {graphLoading && (
-                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
-                  <CircularProgress />
-                </Box>
-              )}
-              {!graphLoading && graphData && graphData.nodes.length > 0 && (
-                <DiscussionNetwork data={graphData} />
-              )}
-              {!graphLoading && graphData && graphData.nodes.length === 0 && (
-                <Typography sx={{ p: 2 }} color="text.secondary">
-                  No reply graph for this topic yet.
+            <Paper elevation={3} sx={{ p: 2, mb: 2 }}>
+              <Typography variant="h6">Topic</Typography>
+              <Typography sx={{ whiteSpace: 'pre-wrap' }}>
+                {detailSummary || selected.summary}
+              </Typography>
+              {stats && stats.numberOfPosts > 0 ? (
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                  {stats.numberOfPosts.toLocaleString()} posts
+                  {stats.averagePostsPerAuthor != null
+                    ? ` · ${stats.averagePostsPerAuthor} per author`
+                    : ''}
+                  {` · median ${stats.medianWordCount} words`}
+                  {stats.averageTimeToPostHours != null
+                    ? ` · ${stats.averageTimeToPostHours}h average after the topic opened`
+                    : ''}
                 </Typography>
-              )}
+              ) : null}
+            </Paper>
+            <DiscussionEna posts={posts} prompt={detailSummary || selected.summary} loading={detailLoading} />
+            <Typography variant="h6" gutterBottom>
+              Posts
+            </Typography>
+            <Box
+              sx={{
+                maxHeight: 480,
+                overflow: 'auto',
+                border: '1px solid #ddd',
+                borderRadius: 1,
+                mb: 3,
+              }}
+            >
+              {!detailLoading && posts.length === 0 ? (
+                <Typography sx={{ p: 2 }} color="text.secondary">
+                  No posts in this topic.
+                </Typography>
+              ) : null}
+              {posts.map((post) => (
+                <Box
+                  key={post.id}
+                  sx={{
+                    pl: 2 + post.depth * 2,
+                    pr: 2,
+                    py: 1.25,
+                    borderBottom: '1px solid',
+                    borderColor: 'divider',
+                  }}
+                >
+                  <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                    {post.authorName}
+                    {post.createdAt
+                      ? ` · ${new Date(post.createdAt).toLocaleString()}`
+                      : ''}
+                    {post.likes > 0 ? ` · ${post.likes} ${post.likes === 1 ? 'like' : 'likes'}` : ''}
+                  </Typography>
+                  <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', mt: 0.5 }}>
+                    {post.message || 'No message.'}
+                  </Typography>
+                </Box>
+              ))}
             </Box>
           </>
         )}

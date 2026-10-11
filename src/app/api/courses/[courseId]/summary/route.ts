@@ -29,27 +29,37 @@ export async function GET(request: Request, { params }: Params) {
     }
 
     if (tab === 'engagement') {
-      const { chart, content } = await getCourseEngagement(courseId);
-      const peak = chart.pageViews.length
-        ? chart.pageViews.indexOf(Math.max(...chart.pageViews))
-        : -1;
-      const latest = chart.participations.at(-1) ?? 0;
-      const prev = chart.participations.at(-2) ?? 0;
-      const trend = latest >= prev ? 'stable or rising' : 'declining';
+      const { content, dailyPattern, timeOfDay } = await getCourseEngagement(courseId);
       const published = content.filter((c) => c.published).length;
       return NextResponse.json({
-        summary: `Semester activity peaks around ${chart.labels[peak] ?? 'mid-term'}. Recent participation looks ${trend} vs the prior week. ${content.length} course content items (${published} published); assignment analytics attached where Canvas provides them.`,
+        summary: `${dailyPattern.narrative} ${timeOfDay.narrative} ${content.length} course content items (${published} published).`,
       });
     }
 
     if (tab === 'students') {
-      const students = await getCourseStudents(courseId);
+      const { students } = await getCourseStudents(courseId, { includeActivity: true });
       const withGrades = students.filter((s) => s.grade != null);
       const atRisk = withGrades.filter((s) => (s.grade ?? 100) < 70);
       const highMissing = students.filter((s) => s.missingWorkLabel === 'High missing').length;
       const engaged = [...students].sort((a, b) => b.participations - a.participations)[0];
+      const scanned = students.filter((s) => s.longestQuietDays != null);
+      const quietest = [...scanned].sort(
+        (a, b) => (b.longestQuietDays ?? 0) - (a.longestQuietDays ?? 0),
+      )[0];
+      const rates = scanned
+        .map((s) => s.engagementRate)
+        .filter((rate): rate is number => rate != null)
+        .sort((a, b) => a - b);
+      const medianRate = rates.length
+        ? rates[Math.floor(rates.length / 2)]
+        : null;
+      const quietSentence = quietest
+        ? ` Longest quiet stretch among scanned students: ${quietest.name}, ${quietest.longestQuietDays} days.`
+        : '';
+      const rateSentence =
+        medianRate != null ? ` Median share of active days is ${medianRate}%.` : '';
       return NextResponse.json({
-        summary: `${students.length} students on the roster; ${atRisk.length} below 70%; ${highMissing} flagged high missing work from analytics. Highest participation: ${engaged?.name ?? 'n/a'} (${engaged?.participations ?? 0} participations, ${engaged?.pagesViewed ?? 0} page views).`,
+        summary: `${students.length} students on the roster; ${atRisk.length} below 70%; ${highMissing} flagged high missing work from analytics. Highest participation: ${engaged?.name ?? 'n/a'} (${engaged?.participations ?? 0} participations, ${engaged?.pagesViewedCourse ?? 0} course page views).${quietSentence}${rateSentence}`,
       });
     }
 

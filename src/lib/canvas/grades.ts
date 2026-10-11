@@ -1,5 +1,12 @@
 import { canvasRequest, fetchAllPages, mapPool } from './client';
 import {
+  assignRating,
+  criteriaFromRubric,
+  loadQuizCriterionMarks,
+  marksFromUnknown,
+  type CatalogCriterion,
+} from './rubricCatalog';
+import {
   type CanvasRubric,
   type GradedSubmission,
   parseLetterToken,
@@ -48,7 +55,31 @@ type CanvasAssignment = {
 };
 
 type CanvasAssignmentDetail = CanvasAssignment & {
-  rubric?: CanvasRubric[] | CanvasRubric | null;
+  quiz_id?: number | null;
+  is_quiz_assignment?: boolean;
+  rubric?: unknown;
+  rubric_settings?: { id?: number } | null;
+};
+
+export type GradebookRating = {
+  key: string;
+  label: string;
+  points: number | null;
+};
+
+export type GradebookCriterion = {
+  key: string;
+  description: string;
+  points: number;
+  scored: boolean;
+  ratings: GradebookRating[];
+};
+
+export type GradebookOutcome = {
+  userId: number;
+  ratings: Record<string, string>;
+  postedPercent: number | null;
+  postedLetter: LetterBucket | null;
 };
 
 type CanvasAssignmentGroup = {
@@ -58,12 +89,18 @@ type CanvasAssignmentGroup = {
 };
 
 type CanvasSubmission = GradedSubmission & {
+  id?: number;
   user_id: number;
   excused?: boolean;
   late?: boolean;
   missing?: boolean;
   submitted_at?: string | null;
 };
+
+/** Canvas Roll Call tool assignment. Kept out of the gradebook list and weights. */
+export function isRollCallAttendance(name: string): boolean {
+  return name.trim().toLowerCase() === 'roll call attendance';
+}
 
 export type SubmissionStatusCounts = {
   submitted: number;
@@ -76,9 +113,13 @@ export type AssessmentGradeRow = {
   id: number;
   name: string;
   weighting: string;
+  /** Share of the final grade, 0–100. Null when the assignment is left out of the final grade. */
+  gradeWeight: number | null;
   grades: Record<LetterBucket, number>;
   notGraded: number;
   usesRubric: boolean;
+  criteria: GradebookCriterion[];
+  outcomes: GradebookOutcome[];
   submissionStatus: SubmissionStatusCounts;
 };
 
@@ -102,6 +143,7 @@ export type CourseGradesPayload = {
     labels: LetterBucket[];
     counts: number[];
     studentsWithGrade: number;
+    scores: number[];
   };
   assessments: AssessmentGradeRow[];
   weightingNote: string;
@@ -156,11 +198,31 @@ function medianScore(scores: number[]): number | null {
   return Math.round(sorted[mid]);
 }
 
-function pickAssignmentRubric(detail: CanvasAssignmentDetail): CanvasRubric | null {
-  const raw = detail.rubric;
-  if (!raw) return null;
-  if (Array.isArray(raw)) return raw[0] ?? null;
-  return raw;
+function rubricForLetters(criteria: CatalogCriterion[]): CanvasRubric | null {
+  if (criteria.length === 0) return null;
+  return {
+    criteria: criteria.map((criterion) => ({
+      id: criterion.id,
+      points: criterion.points,
+      ratings: criterion.ratings.flatMap((rating) =>
+        rating.id == null
+          ? []
+          : [{ id: rating.id, points: rating.points ?? undefined, description: rating.label }],
+      ),
+    })),
+  };
+}
+
+function snapshotCriteria(criteria: CatalogCriterion[]): GradebookCriterion[] {
+  return criteria.map((criterion) => ({
+    key: criterion.key,
+    description: criterion.description,
+    points: criterion.points,
+    scored: criterion.scored,
+    ratings: [...criterion.ratings]
+      .sort((a, b) => (b.points ?? -1) - (a.points ?? -1) || a.label.localeCompare(b.label))
+      .map((rating) => ({ key: rating.key, label: rating.label, points: rating.points })),
+  }));
 }
 
 function buildAssignmentsByGroup(assignments: CanvasAssignment[]): Map<number, CanvasAssignment[]> {
@@ -173,6 +235,33 @@ function buildAssignmentsByGroup(assignments: CanvasAssignment[]): Map<number, C
     map.set(gid, list);
   }
   return map;
+}
+
+function assignmentGradeWeight(
+  assignment: CanvasAssignment,
+  groups: CanvasAssignmentGroup[],
+  byGroup: Map<number, CanvasAssignment[]>,
+  allGradedAssignments: CanvasAssignment[],
+  applyGroupWeights: boolean,
+): number | null {
+  if (assignment.omit_from_final_grade) return null;
+
+  const points = assignment.points_possible ?? 0;
+  const groupId = assignment.assignment_group_id ?? 0;
+  const group = groups.find((g) => g.id === groupId);
+
+  if (applyGroupWeights) {
+    const groupWeight = group?.group_weight ?? 0;
+    if (groupWeight <= 0) return 0;
+    const inGroup = byGroup.get(groupId) ?? [];
+    const groupPoints = inGroup.reduce((sum, a) => sum + (a.points_possible ?? 0), 0);
+    if (groupPoints <= 0) return groupWeight;
+    return (points / groupPoints) * groupWeight;
+  }
+
+  const coursePoints = allGradedAssignments.reduce((sum, a) => sum + (a.points_possible ?? 0), 0);
+  if (coursePoints <= 0) return 0;
+  return (points / coursePoints) * 100;
 }
 
 function formatAssignmentWeight(
@@ -225,7 +314,9 @@ export async function getCourseGrades(courseId: string): Promise<CourseGradesPay
   const studentIds = users.map((u) => u.id);
   const applyGroupWeights = course.apply_assignment_group_weights === true;
 
-  const publishedAssignments = assignments.filter((a) => a.published !== false);
+  const publishedAssignments = assignments.filter(
+    (a) => a.published === true && !isRollCallAttendance(a.name),
+  );
   const gradedAssignments = publishedAssignments.filter((a) => !a.omit_from_final_grade);
   const byGroup = buildAssignmentsByGroup(publishedAssignments);
 
@@ -261,15 +352,14 @@ export async function getCourseGrades(courseId: string): Promise<CourseGradesPay
   };
 
   const assignmentRows = await mapPool(publishedAssignments, 5, async (assignment) => {
-    let rubric: CanvasRubric | null = null;
+    let detail: CanvasAssignmentDetail | null = null;
     try {
-      const detail = await canvasRequest<CanvasAssignmentDetail>(
+      detail = await canvasRequest<CanvasAssignmentDetail>(
         `/courses/${courseId}/assignments/${assignment.id}`,
         { 'include[]': 'rubric' },
       );
-      rubric = pickAssignmentRubric(detail);
     } catch {
-      rubric = null;
+      detail = null;
     }
 
     let submissions: CanvasSubmission[] = [];
@@ -282,25 +372,69 @@ export async function getCourseGrades(courseId: string): Promise<CourseGradesPay
       submissions = [];
     }
 
+    const criteria = criteriaFromRubric(detail?.rubric);
+    const marksByUser = new Map<number, ReturnType<typeof marksFromUnknown>>();
+    const submissionUser = new Map<number, number>();
+    for (const submission of submissions) {
+      if (submission.id != null) submissionUser.set(submission.id, submission.user_id);
+      const marks = marksFromUnknown(submission.rubric_assessment);
+      if (marks.length > 0) marksByUser.set(submission.user_id, marks);
+    }
+
+    const quizId = detail?.quiz_id;
+    const rubricId = detail?.rubric_settings?.id;
+    const isQuiz = quizId != null || detail?.is_quiz_assignment === true;
+    if (isQuiz && quizId != null && rubricId != null && marksByUser.size === 0) {
+      try {
+        const quiz = await loadQuizCriterionMarks(courseId, quizId, rubricId, submissionUser);
+        if (criteria.length === 0) criteria.push(...quiz.criteria);
+        for (const [userId, marks] of quiz.marksByUser) {
+          if (!marksByUser.has(userId) && marks.length > 0) marksByUser.set(userId, marks);
+        }
+      } catch {
+        // The assignment row still uses the posted score.
+      }
+    }
+
+    const rubric = rubricForLetters(criteria);
     const subByUser = new Map(submissions.map((s) => [s.user_id, s]));
     const submissionStatus = countSubmissionStatuses(studentIds, subByUser);
     const buckets = emptyBuckets();
     let notGraded = 0;
     const points = assignment.points_possible ?? 0;
+    const outcomes: GradebookOutcome[] = [];
 
     for (const studentId of studentIds) {
       const sub = subByUser.get(studentId);
       if (sub?.excused) continue;
 
-      const letter = sub
-        ? resolveGradedSubmissionLetter(sub, points, rubric)
-        : null;
+      const letter = sub ? resolveGradedSubmissionLetter(sub, points, rubric) : null;
+      if (!letter) notGraded += 1;
+      else buckets[letter] += 1;
 
-      if (!letter) {
-        notGraded += 1;
-        continue;
+      const ratings: Record<string, string> = {};
+      for (const mark of marksByUser.get(studentId) ?? []) {
+        const criterion = criteria.find((item) => item.id === mark.criterionId);
+        if (!criterion) continue;
+        const ratingKey = assignRating(criterion, mark);
+        if (ratingKey) ratings[criterion.key] = ratingKey;
       }
-      buckets[letter] += 1;
+
+      const postedPercent =
+        sub?.score != null &&
+        !Number.isNaN(sub.score) &&
+        (sub.graded_at != null || sub.workflow_state === 'graded')
+          ? points > 0
+            ? (sub.score / points) * 100
+            : sub.score
+          : null;
+
+      outcomes.push({
+        userId: studentId,
+        ratings,
+        postedPercent,
+        postedLetter: letter,
+      });
     }
 
     return {
@@ -313,16 +447,25 @@ export async function getCourseGrades(courseId: string): Promise<CourseGradesPay
         gradedAssignments,
         applyGroupWeights,
       ),
+      gradeWeight: assignmentGradeWeight(
+        assignment,
+        groups,
+        byGroup,
+        gradedAssignments,
+        applyGroupWeights,
+      ),
       grades: buckets,
       notGraded,
-      usesRubric: rubric != null,
+      usesRubric: criteria.length > 0,
+      criteria: snapshotCriteria(criteria),
+      outcomes,
       submissionStatus,
     };
   });
 
   const weightingNote = applyGroupWeights
-    ? 'Weighting uses Canvas assignment groups (group weight × share of points within the group).'
-    : 'Weighting is proportional to points possible (this course does not use weighted assignment groups).';
+    ? 'Weighting uses Canvas assignment groups (group weight × share of points within the group). Roll Call Attendance is omitted and is not given a weight.'
+    : 'Weighting is proportional to points possible (this course does not use weighted assignment groups). Roll Call Attendance is omitted and is not given a weight.';
 
   return {
     kpi,
@@ -330,6 +473,7 @@ export async function getCourseGrades(courseId: string): Promise<CourseGradesPay
       labels: ['A', 'B', 'C', 'D', 'F'],
       counts: ['A', 'B', 'C', 'D', 'F'].map((l) => courseBuckets[l as LetterBucket]),
       studentsWithGrade,
+      scores: numericScores,
     },
     assessments: assignmentRows,
     weightingNote,

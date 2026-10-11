@@ -14,7 +14,7 @@ export async function GET(_request: Request, { params }: Params) {
       discussions,
       dataSources: [
         'GET /courses/:id/discussion_topics',
-        'GET /courses/:id/discussion_topics/:id/entries (detail graph)',
+        'GET /courses/:id/discussion_topics/:topic_id/view (full posts and nested replies)',
       ],
     });
   } catch (error) {

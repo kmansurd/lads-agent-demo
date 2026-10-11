@@ -1,19 +1,15 @@
+import { addHourlyPageViews, timeOfDayFromHistogram, type TimeOfDayPattern } from './activityPatterns';
 import { canvasRequest, fetchAllPages, mapPool } from './client';
 import type { CourseContentRow } from './courseContentCatalog';
 import { findContentRowForUrl, normalizeActivityUrl } from './contentUrlMatch';
+import {
+  getCachedStudentAnalyticsActivity,
+  isNoiseParticipationUrl,
+} from './studentAnalyticsActivity';
 import { toIsoDateUtc } from './courseTimeline';
 
 const STUDENT_CAP = 200;
 const CONCURRENCY = 10;
-
-type ParticipationEvent = {
-  created_at?: string;
-  url?: string;
-};
-
-type UserActivity = {
-  participations?: ParticipationEvent[];
-};
 
 function participationInRange(
   createdAt: string | undefined,
@@ -79,19 +75,32 @@ async function loadStudentIds(courseId: string): Promise<number[]> {
  * Per-item view proxy: count Canvas Analytics participation URLs in the date range.
  * Used when page-view logs are unavailable (e.g. view_statistics permission).
  */
+export type ParticipationViewsResult = {
+  studentsScanned: number;
+  viewsMatched: number;
+  /** Course-wide student page views in range (hourly analytics buckets, UBC-style). */
+  totalHourlyPageViewsInRange: number;
+  timeOfDay: TimeOfDayPattern;
+};
+
 export async function applyParticipationViewsForDateRange(
   courseId: string,
   content: CourseContentRow[],
   start: Date,
   end: Date,
-): Promise<{ studentsScanned: number; viewsMatched: number }> {
+): Promise<ParticipationViewsResult> {
   for (const row of content) {
     row.pageViews = 0;
   }
 
   const studentIds = await loadStudentIds(courseId);
   if (studentIds.length === 0) {
-    return { studentsScanned: 0, viewsMatched: 0 };
+    return {
+      studentsScanned: 0,
+      viewsMatched: 0,
+      totalHourlyPageViewsInRange: 0,
+      timeOfDay: timeOfDayFromHistogram(new Array(24).fill(0), 0),
+    };
   }
 
   const capped =
@@ -102,19 +111,22 @@ export async function applyParticipationViewsForDateRange(
   const viewCounts = new Map<string, number>();
   const viewStudents = new Map<string, Set<number>>();
   let viewsMatched = 0;
+  let totalHourlyPageViewsInRange = 0;
+  const hours = new Array<number>(24).fill(0);
 
   await mapPool(capped, CONCURRENCY, async (userId) => {
-    let activity: UserActivity;
+    let activity;
     try {
-      activity = await canvasRequest<UserActivity>(
-        `/courses/${courseId}/analytics/users/${userId}/activity`,
-      );
+      activity = await getCachedStudentAnalyticsActivity(courseId, userId);
     } catch {
       return;
     }
 
+    totalHourlyPageViewsInRange += addHourlyPageViews(hours, activity.page_views, start, end);
+
     for (const event of activity.participations ?? []) {
-      if (!event.url || !participationInRange(event.created_at, start, end)) continue;
+      if (!event.url || isNoiseParticipationUrl(event.url)) continue;
+      if (!participationInRange(event.created_at, start, end)) continue;
       const row = findRowForActivityEvent(
         content,
         event.url,
@@ -141,5 +153,10 @@ export async function applyParticipationViewsForDateRange(
     }
   }
 
-  return { studentsScanned: capped.length, viewsMatched };
+  return {
+    studentsScanned: capped.length,
+    viewsMatched,
+    totalHourlyPageViewsInRange,
+    timeOfDay: timeOfDayFromHistogram(hours, capped.length),
+  };
 }

@@ -12,6 +12,7 @@ import {
   resolveEngagementRange,
   type EngagementRangeMeta,
 } from './engagementRange';
+import { analyzeDailyAccess, type DailyAccessPattern, type TimeOfDayPattern } from './activityPatterns';
 import { semesterDataCutoff } from './semesterWindow';
 
 export type EngagementChart = {
@@ -26,6 +27,10 @@ export type CourseEngagementPayload = {
   content: CourseContentRow[];
   dailyActivity: DailyActivityPoint[];
   range: EngagementRangeMeta;
+  /** Course-wide day patterns from analytics/activity. */
+  dailyPattern: DailyAccessPattern;
+  /** Hour-of-day split from scanned students' hourly analytics buckets. */
+  timeOfDay: TimeOfDayPattern;
   dataSources: string[];
 };
 
@@ -116,7 +121,8 @@ export async function getCourseEngagement(
 ): Promise<CourseEngagementPayload> {
   const dataSources = [
     'GET /courses/:id/analytics/activity',
-    'GET /users/:user_id/page_views or analytics/users/:id/activity participations (table date range)',
+    'GET /courses/:id/analytics/users/:id/activity (hourly page views + participation URLs; UBC-style)',
+    'GET /users/:user_id/page_views (when Statistics permission enabled)',
     'GET /courses/:id/assignments/:id/submissions (submissions in range)',
     'GET /courses/:id/assignments, /pages, /files, /quizzes, /discussion_topics, /modules',
   ];
@@ -146,12 +152,24 @@ export async function getCourseEngagement(
 
   const dailyInRange = filterDailyToWindow(dailyActivity, range.start, range.end);
   const weekly = aggregateDailyToWeekly(dailyInRange, range.start, range.end);
+  const dailyPattern = analyzeDailyAccess(
+    dailyInRange.map((row) => ({ date: row.date, views: row.views })),
+    range.start,
+    range.end,
+  );
 
   const rangeLabel = `${formatRangeLabel(meta.selectedStart)} – ${formatRangeLabel(meta.selectedEnd)}`;
   let contentNote =
     'Table page views use dated page-view logs when Statistics permission is enabled; otherwise Canvas Analytics participation URLs in the selected range. Assignments also show submissions with `submitted_at` in range.';
 
   let content: CourseContentRow[] = [];
+  let timeOfDay: TimeOfDayPattern = {
+    periods: [],
+    peakHours: [],
+    totalViews: 0,
+    studentsScanned: 0,
+    narrative: 'Hourly page views were not loaded for this range.',
+  };
   try {
     content = await listCourseContentCatalog(courseId);
     const pageViews = await applyPageViewsForDateRange(
@@ -160,11 +178,17 @@ export async function getCourseEngagement(
       range.start,
       range.end,
     );
+    timeOfDay = pageViews.timeOfDay;
     await applyAssignmentMetricsForDateRange(courseId, content, range.start, range.end);
 
     if (pageViews.source === 'analytics_participations') {
       contentNote +=
-        ' Page views are inferred from analytics participation events (assignments/LTI activity)—not full Access Report view counts. Pages and files may stay at 0 without Statistics - view permission.';
+        ' Per-row page views use participation URLs in range (assignments/LTI); course-wide student page views in range (hourly analytics, same approach as UBC canvas-course-page-view-count)';
+      if (pageViews.totalHourlyPageViewsInRange > 0) {
+        contentNote += `: ${pageViews.totalHourlyPageViewsInRange.toLocaleString()} total across scanned students.`;
+      }
+      contentNote +=
+        ' Pages and files may stay at 0 without Statistics - view permission.';
     } else if (!pageViews.available && pageViews.viewsMatched === 0) {
       contentNote +=
         ' No page-view rows returned for this range (roster empty or no matching URLs).';
@@ -192,6 +216,8 @@ export async function getCourseEngagement(
     content,
     dailyActivity: options.contentOnly ? [] : dailyActivity,
     range: meta,
+    dailyPattern,
+    timeOfDay,
     dataSources,
   };
 }

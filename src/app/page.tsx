@@ -75,7 +75,7 @@ function Dashboard() {
   return (
     <Box sx={{ display: 'flex' }}>
       <Sidebar />
-      <Box sx={{ flexGrow: 1 }}>
+      <Box sx={{ flexGrow: 1, minWidth: 0, maxWidth: '100%', overflowX: 'hidden' }}>
         <Header
           onGenerateSummary={handleGenerateSummary}
           summaryLoading={summaryLoading}

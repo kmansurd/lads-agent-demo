@@ -92,7 +92,9 @@ function buildTabNotes(
 
   const studentsParts: string[] = ['roster and grades from enrollments'];
   if (analytics.studentSummaries === 'ok') {
-    studentsParts.push('page views and participations from analytics/student_summaries');
+    studentsParts.push(
+      'course totals from analytics/student_summaries; period page views, active days, and quiet stretches from analytics/users/:id/activity hourly buckets',
+    );
   } else {
     studentsParts.push(
       `Canvas student analytics ${labelAccess(analytics.studentSummaries)} — engagement columns may be empty`,
@@ -102,12 +104,12 @@ function buildTabNotes(
   const gradebookOk =
     gradebook.enrollments === 'ok' && gradebook.assignments === 'ok';
   const gradebookNote = gradebookOk
-    ? 'Gradebook data uses enrollments, assignments, and submissions.'
+    ? 'Gradebook data uses enrollments, assignments, and submissions. A selected assignment shows criterion marks and the posted score beside the rubric total. Rubric ratings can be matched to letter grades or percentage ranges. The assessment table follows that match, and the overall chart weights those assignment results by the weighting column. Quiz rubrics are read when the assignment submission has no criterion marks.'
     : 'Some gradebook APIs are unavailable — charts may be incomplete.';
 
   const discussionsNote =
     discussions === 'ok'
-      ? 'Discussion list and reply graph use discussion_topics and entries.'
+      ? 'Discussion posts come from the full discussion view. Idea connections are an epistemic network analysis of those posts.'
       : `Discussions API ${labelAccess(discussions)}.`;
 
   return {

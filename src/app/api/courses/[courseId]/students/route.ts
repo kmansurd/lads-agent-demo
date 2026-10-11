@@ -6,16 +6,21 @@ export const dynamic = 'force-dynamic';
 
 type Params = { params: Promise<{ courseId: string }> };
 
-export async function GET(_request: Request, { params }: Params) {
+export async function GET(request: Request, { params }: Params) {
   try {
     const { courseId } = await params;
-    const students = await getCourseStudents(courseId);
+    const url = new URL(request.url);
+    const payload = await getCourseStudents(courseId, {
+      start: url.searchParams.get('start'),
+      end: url.searchParams.get('end'),
+    });
     return NextResponse.json({
-      students,
+      ...payload,
       dataSources: [
         'GET /courses/:id/users',
         'GET /courses/:id/enrollments',
         'GET /courses/:id/analytics/student_summaries',
+        'GET /courses/:id/analytics/users/:student_id/activity (hourly page views in range)',
       ],
     });
   } catch (error) {

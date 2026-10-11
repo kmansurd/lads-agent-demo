@@ -16,9 +16,11 @@ import { DataGrid, GridColDef } from '@mui/x-data-grid';
 import { Box, Typography, Alert, Chip, Slider, Stack } from '@mui/material';
 import { useCourse } from '@/context/CourseContext';
 import { TabLoader } from '@/components/CourseDataState';
+import { ActivityPatternPanel } from '@/components/ActivityPatternPanel';
 import { TabDataSourceFooter } from '@/components/TabDataSourceFooter';
 import { useCourseCapabilities } from '@/hooks/useCourseCapabilities';
 import { useCourseData } from '@/hooks/useCourseData';
+import { analyzeDailyAccess, type TimeOfDayPattern } from '@/lib/canvas/activityPatterns';
 import type { CourseEngagementPayload } from '@/lib/canvas/engagement';
 import type { CourseContentType, CourseContentRow } from '@/lib/canvas/courseContentCatalog';
 import {
@@ -127,6 +129,7 @@ const Engagement = () => {
 
   const [dailyActivity, setDailyActivity] = useState<DailyActivityPoint[]>([]);
   const [content, setContent] = useState<CourseContentRow[]>([]);
+  const [timeOfDay, setTimeOfDay] = useState<TimeOfDayPattern | null>(null);
   const [maxDayIndex, setMaxDayIndex] = useState(0);
   const [semesterStartIso, setSemesterStartIso] = useState('');
   const [startIdx, setStartIdx] = useState(0);
@@ -139,6 +142,7 @@ const Engagement = () => {
       setDailyActivity(data.dailyActivity);
     }
     setContent(data.content);
+    setTimeOfDay(data.timeOfDay);
 
     const semStart = parseIsoDateLocal(data.range.semesterStart);
     const selectedStart = parseIsoDateLocal(data.range.selectedStart);
@@ -158,6 +162,22 @@ const Engagement = () => {
     () => indicesToIso(semesterStartIso, startIdx, endIdx),
     [semesterStartIso, startIdx, endIdx],
   );
+
+  const dailyPattern = useMemo(() => {
+    const semStart = parseIsoDateLocal(semesterStartIso);
+    if (!semStart) return data?.dailyPattern ?? null;
+    const start = dateFromDayIndex(semStart, startIdx);
+    const end = dateFromDayIndex(semStart, endIdx);
+    const filtered = filterDailyToWindow(dailyActivity, start, end);
+    if (filtered.length === 0 && dailyActivity.length === 0) {
+      return data?.dailyPattern ?? null;
+    }
+    return analyzeDailyAccess(
+      filtered.map((row) => ({ date: row.date, views: row.views })),
+      start,
+      end,
+    );
+  }, [dailyActivity, semesterStartIso, startIdx, endIdx, data?.dailyPattern]);
 
   const chartBundle = useMemo(() => {
     const semStart = parseIsoDateLocal(semesterStartIso);
@@ -185,6 +205,7 @@ const Engagement = () => {
       const body = (await res.json()) as CourseEngagementPayload;
       if (res.ok) {
         setContent(body.content);
+        if (body.timeOfDay) setTimeOfDay(body.timeOfDay);
       }
     } finally {
       setContentLoading(false);
@@ -322,6 +343,14 @@ const Engagement = () => {
           No activity data for this period.
         </Typography>
       )}
+
+      {dailyPattern ? (
+        <ActivityPatternPanel
+          daily={dailyPattern}
+          timeOfDay={timeOfDay}
+          timeOfDayLoading={contentLoading}
+        />
+      ) : null}
 
       <Box sx={{ width: '100%' }}>
         <Typography variant="h6" gutterBottom>
