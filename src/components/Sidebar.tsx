@@ -60,7 +60,7 @@ const Sidebar = () => {
                   )}
                   {courses.map((course) => (
                     <MenuItem key={course.id} value={String(course.id)}>
-                      {course.name}
+                      {course.term ? `${course.name} (${course.term})` : course.name}
                     </MenuItem>
                   ))}
                 </Select>

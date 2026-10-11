@@ -14,6 +14,7 @@ export type CourseOption = {
   id: number;
   name: string;
   courseCode: string;
+  term?: string | null;
 };
 
 type CourseContextValue = {

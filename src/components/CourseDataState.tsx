@@ -26,7 +26,7 @@ export function CourseShell({ children }: { children: React.ReactNode }) {
   if (!courseId) {
     return (
       <Alert severity="info" sx={{ m: 2 }}>
-        No Canvas courses found for this token.
+        No published Teacher, TA, Designer, or Course Admin courses were returned for this account.
       </Alert>
     );
   }
