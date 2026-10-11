@@ -4,12 +4,13 @@ import { Box, Tabs, Tab, Typography, Paper, Button } from '@mui/material';
 import Sidebar from '@/components/Sidebar';
 import Header from '@/components/Header';
 import CourseGrade from '@/components/CourseGrade';
-import WeeklyOnlineActivity from '@/components/WeeklyOnlineActivity';
+import Engagement from '@/components/Engagement';
 import Students from '@/components/Students';
 import Discussions from '@/components/Discussions';
 import ChatBubble, { ChatBubbleHandle } from '@/components/ChatBubble';
 import { CourseProvider, useCourse } from '@/context/CourseContext';
 import { CourseShell } from '@/components/CourseDataState';
+import { CanvasCapabilitiesBanner } from '@/components/CanvasCapabilitiesBanner';
 
 function TabPanel(props: { children?: React.ReactNode; index: number; value: number }) {
   const { children, value, index, ...other } = props;
@@ -31,7 +32,7 @@ function TabPanel(props: { children?: React.ReactNode; index: number; value: num
   );
 }
 
-const TAB_KEYS = ['grades', 'activity', 'students', 'discussions'] as const;
+const TAB_KEYS = ['grades', 'engagement', 'students', 'discussions'] as const;
 
 function Dashboard() {
   const [value, setValue] = useState(0);
@@ -75,15 +76,20 @@ function Dashboard() {
     <Box sx={{ display: 'flex' }}>
       <Sidebar />
       <Box sx={{ flexGrow: 1 }}>
-        <Header onGenerateSummary={handleGenerateSummary} summaryLoading={summaryLoading} />
+        <Header
+          onGenerateSummary={handleGenerateSummary}
+          summaryLoading={summaryLoading}
+          summaryDisabled={!courseId}
+        />
         <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
           <Tabs value={value} onChange={handleChange} aria-label="course analytics tabs">
-            <Tab label="Course Grade" />
-            <Tab label="Weekly Online Activity" />
+            <Tab label="Gradebook" />
+            <Tab label="Engagement" />
             <Tab label="Students" />
             <Tab label="Discussions" />
           </Tabs>
         </Box>
+        <CanvasCapabilitiesBanner />
         {summary && (
           <Paper elevation={3} sx={{ p: 2, m: 2, bgcolor: 'action.hover' }}>
             <Typography variant="h6">Summary</Typography>
@@ -100,7 +106,7 @@ function Dashboard() {
             <CourseGrade />
           </TabPanel>
           <TabPanel value={value} index={1}>
-            <WeeklyOnlineActivity />
+            <Engagement />
           </TabPanel>
           <TabPanel value={value} index={2}>
             <Students />
@@ -112,7 +118,7 @@ function Dashboard() {
       </Box>
       <ChatBubble
         ref={chatRef}
-        currentTab={['Course Grade', 'Weekly Online Activity', 'Students', 'Discussions'][value]}
+        currentTab={['Gradebook', 'Engagement', 'Students', 'Discussions'][value]}
       />
     </Box>
   );

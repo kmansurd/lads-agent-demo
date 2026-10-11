@@ -1,4 +1,5 @@
 import { fetchAllPages } from './client';
+import { missingWorkFromSummary } from './studentTardiness';
 
 type StudentSummary = {
   id: number;
@@ -34,6 +35,8 @@ export type StudentRow = {
   lastActivity: string;
   pagesViewed: number;
   participations: number;
+  missingWorkPct: number | null;
+  missingWorkLabel: string;
 };
 
 export async function getCourseStudents(courseId: string): Promise<StudentRow[]> {
@@ -74,6 +77,8 @@ export async function getCourseStudents(courseId: string): Promise<StudentRow[]>
       ? enrollment.last_activity_at.slice(0, 10)
       : '—';
 
+    const missingWork = missingWorkFromSummary(summary?.tardiness_breakdown);
+
     rows.push({
       id,
       name,
@@ -81,6 +86,8 @@ export async function getCourseStudents(courseId: string): Promise<StudentRow[]>
       lastActivity,
       pagesViewed: summary?.page_views ?? 0,
       participations: summary?.participations ?? 0,
+      missingWorkPct: missingWork.missingWorkPct,
+      missingWorkLabel: missingWork.label,
     });
   }
 

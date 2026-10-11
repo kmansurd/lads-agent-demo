@@ -10,7 +10,13 @@ export async function GET(_request: Request, { params }: Params) {
   try {
     const { courseId } = await params;
     const discussions = await listCourseDiscussions(courseId);
-    return NextResponse.json({ discussions });
+    return NextResponse.json({
+      discussions,
+      dataSources: [
+        'GET /courses/:id/discussion_topics',
+        'GET /courses/:id/discussion_topics/:id/entries (detail graph)',
+      ],
+    });
   } catch (error) {
     return handleRouteError(error);
   }

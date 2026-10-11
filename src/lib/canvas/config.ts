@@ -1,3 +1,22 @@
+const CANVAS_API_PATH = /^\/api\/v\d+\/?$/;
+
+function validateCanvasApiUrl(baseUrl: string): void {
+  let url: URL;
+  try {
+    url = new URL(baseUrl);
+  } catch {
+    throw new Error(
+      'CANVAS_API_URL must be a valid URL ending with /api/v1 (e.g. https://canvas.instructure.com/api/v1)',
+    );
+  }
+
+  if (!CANVAS_API_PATH.test(url.pathname)) {
+    throw new Error(
+      'CANVAS_API_URL must end with /api/v1 (e.g. https://canvas.instructure.com/api/v1). Paths like /api/v without a version number are not valid.',
+    );
+  }
+}
+
 export function getCanvasConfig() {
   const baseUrl = process.env.CANVAS_API_URL?.replace(/\/$/, '');
   const token = process.env.CANVAS_API_TOKEN;
@@ -6,11 +25,7 @@ export function getCanvasConfig() {
     return null;
   }
 
-  if (!baseUrl.includes('/api/v')) {
-    throw new Error(
-      'CANVAS_API_URL must include the /api/v1 path (e.g. https://canvas.instructure.com/api/v1)',
-    );
-  }
+  validateCanvasApiUrl(baseUrl);
 
   return { baseUrl, token };
 }

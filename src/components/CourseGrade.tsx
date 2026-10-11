@@ -18,9 +18,14 @@ import {
   Select,
   MenuItem,
   Button,
+  Card,
+  CardContent,
+  Grid,
 } from '@mui/material';
 import { useCourseData } from '@/hooks/useCourseData';
 import { TabLoader } from '@/components/CourseDataState';
+import { TabDataSourceFooter } from '@/components/TabDataSourceFooter';
+import { useCourseCapabilities } from '@/hooks/useCourseCapabilities';
 import type { CourseGradesPayload, AssessmentGradeRow } from '@/lib/canvas/grades';
 import { gradeCountsForChart, partitionAssessments } from '@/lib/canvas/assessmentDisplay';
 
@@ -48,6 +53,10 @@ function AssessmentTableRows({ rows }: { rows: AssessmentGradeRow[] }) {
           <TableCell align="right">{assessment.grades.D}</TableCell>
           <TableCell align="right">{assessment.grades.F}</TableCell>
           <TableCell align="right">{assessment.notGraded}</TableCell>
+          <TableCell align="right">{assessment.submissionStatus.submitted}</TableCell>
+          <TableCell align="right">{assessment.submissionStatus.late}</TableCell>
+          <TableCell align="right">{assessment.submissionStatus.missing}</TableCell>
+          <TableCell align="right">{assessment.submissionStatus.excused}</TableCell>
         </TableRow>
       ))}
     </>
@@ -70,8 +79,8 @@ const AssessmentTable = ({
         Assessments
       </Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        Rubric assignments with a clear % weight are listed first. Only students with a clear grade
-        on that assignment are counted in A–F; others appear under Not graded.
+        Rubric assignments with a clear % weight are listed first. A–F counts require a clear grade;
+        submission columns use Canvas submission state (on time, late, missing, excused).
       </Typography>
       {featured.length === 0 && hiddenCount === 0 ? (
         <Typography color="text.secondary">No published assignments.</Typography>
@@ -89,6 +98,10 @@ const AssessmentTable = ({
                   <TableCell align="right">D</TableCell>
                   <TableCell align="right">F</TableCell>
                   <TableCell align="right">Not graded</TableCell>
+                  <TableCell align="right">Submitted</TableCell>
+                  <TableCell align="right">Late</TableCell>
+                  <TableCell align="right">Missing</TableCell>
+                  <TableCell align="right">Excused</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -96,7 +109,7 @@ const AssessmentTable = ({
                   <AssessmentTableRows rows={featured} />
                 ) : (
                   <TableRow>
-                    <TableCell colSpan={8}>
+                    <TableCell colSpan={12}>
                       <Typography variant="body2" color="text.secondary">
                         No rubric assignments with clear weighting — use View more to see all
                         assessments.
@@ -122,7 +135,8 @@ const AssessmentTable = ({
 };
 
 const CourseGrade = () => {
-  const { data, loading, error } = useCourseData<CourseGradesPayload>('grades');
+  const { data, loading, error, fetchedAt } = useCourseData<CourseGradesPayload>('grades');
+  const { capabilities } = useCourseCapabilities();
   const [chartSelection, setChartSelection] = useState<string>(OVERALL_CHART_VALUE);
 
   const { featured, other } = useMemo(
@@ -179,8 +193,68 @@ const CourseGrade = () => {
     ],
   };
 
+  const { kpi } = data;
+
   return (
     <Box>
+      <Grid container spacing={2} sx={{ mb: 3 }}>
+        <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+          <Card variant="outlined">
+            <CardContent>
+              <Typography variant="overline" color="text.secondary">
+                Enrolled
+              </Typography>
+              <Typography variant="h5">{kpi.studentsEnrolled}</Typography>
+            </CardContent>
+          </Card>
+        </Grid>
+        <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+          <Card variant="outlined">
+            <CardContent>
+              <Typography variant="overline" color="text.secondary">
+                With current grade
+              </Typography>
+              <Typography variant="h5">
+                {kpi.studentsWithGrade}
+                {kpi.percentWithGrade != null ? (
+                  <Typography component="span" variant="body2" color="text.secondary" sx={{ ml: 1 }}>
+                    ({kpi.percentWithGrade}%)
+                  </Typography>
+                ) : null}
+              </Typography>
+            </CardContent>
+          </Card>
+        </Grid>
+        <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+          <Card variant="outlined">
+            <CardContent>
+              <Typography variant="overline" color="text.secondary">
+                Median score
+              </Typography>
+              <Typography variant="h5">
+                {kpi.medianScore != null ? `${kpi.medianScore}%` : '—'}
+              </Typography>
+            </CardContent>
+          </Card>
+        </Grid>
+        <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+          <Card variant="outlined">
+            <CardContent>
+              <Typography variant="overline" color="text.secondary">
+                Assignments (missing &gt; submitted)
+              </Typography>
+              <Typography variant="h5">
+                {
+                  data.assessments.filter(
+                    (row) => row.submissionStatus.missing > row.submissionStatus.submitted,
+                  ).length
+                }
+              </Typography>
+            </CardContent>
+          </Card>
+        </Grid>
+      </Grid>
+
       <Alert severity="info" sx={{ mb: 2 }}>
         {chartSelection === OVERALL_CHART_VALUE ? (
           <>
@@ -218,6 +292,11 @@ const CourseGrade = () => {
         {data.weightingNote}
       </Typography>
       <AssessmentTable featured={featured} other={other} />
+      <TabDataSourceFooter
+        sources={data.dataSources}
+        fetchedAt={fetchedAt}
+        note={capabilities?.tabNotes.gradebook}
+      />
     </Box>
   );
 };

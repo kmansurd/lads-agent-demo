@@ -60,6 +60,16 @@ type CanvasAssignmentGroup = {
 type CanvasSubmission = GradedSubmission & {
   user_id: number;
   excused?: boolean;
+  late?: boolean;
+  missing?: boolean;
+  submitted_at?: string | null;
+};
+
+export type SubmissionStatusCounts = {
+  submitted: number;
+  late: number;
+  missing: number;
+  excused: number;
 };
 
 export type AssessmentGradeRow = {
@@ -69,9 +79,25 @@ export type AssessmentGradeRow = {
   grades: Record<LetterBucket, number>;
   notGraded: number;
   usesRubric: boolean;
+  submissionStatus: SubmissionStatusCounts;
 };
 
+export type GradebookKpi = {
+  studentsEnrolled: number;
+  studentsWithGrade: number;
+  percentWithGrade: number | null;
+  medianScore: number | null;
+};
+
+export const GRADEBOOK_DATA_SOURCES = [
+  'GET /courses/:id/enrollments',
+  'GET /courses/:id/assignments',
+  'GET /courses/:id/assignments/:id/submissions',
+  'GET /courses/:id/assignment_groups',
+] as const;
+
 export type CourseGradesPayload = {
+  kpi: GradebookKpi;
   distribution: {
     labels: LetterBucket[];
     counts: number[];
@@ -79,7 +105,56 @@ export type CourseGradesPayload = {
   };
   assessments: AssessmentGradeRow[];
   weightingNote: string;
+  dataSources: string[];
 };
+
+function isSubmissionTurnedIn(sub: CanvasSubmission | undefined): boolean {
+  if (!sub) return false;
+  if (sub.submitted_at) return true;
+  const state = sub.workflow_state;
+  return state === 'submitted' || state === 'graded' || state === 'pending_review';
+}
+
+function countSubmissionStatuses(
+  studentIds: number[],
+  subByUser: Map<number, CanvasSubmission>,
+): SubmissionStatusCounts {
+  const counts: SubmissionStatusCounts = {
+    submitted: 0,
+    late: 0,
+    missing: 0,
+    excused: 0,
+  };
+
+  for (const studentId of studentIds) {
+    const sub = subByUser.get(studentId);
+    if (sub?.excused) {
+      counts.excused += 1;
+      continue;
+    }
+    if (sub?.missing === true || !isSubmissionTurnedIn(sub)) {
+      counts.missing += 1;
+      continue;
+    }
+    if (sub!.late) {
+      counts.late += 1;
+    } else {
+      counts.submitted += 1;
+    }
+  }
+
+  return counts;
+}
+
+function medianScore(scores: number[]): number | null {
+  if (scores.length === 0) return null;
+  const sorted = [...scores].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 0) {
+    return Math.round((sorted[mid - 1] + sorted[mid]) / 2);
+  }
+  return Math.round(sorted[mid]);
+}
 
 function pickAssignmentRubric(detail: CanvasAssignmentDetail): CanvasRubric | null {
   const raw = detail.rubric;
@@ -156,20 +231,34 @@ export async function getCourseGrades(courseId: string): Promise<CourseGradesPay
 
   const courseBuckets = emptyBuckets();
   let studentsWithGrade = 0;
+  const numericScores: number[] = [];
   for (const user of users) {
     const enrollment = user.enrollments?.find(
       (e) => e.type === 'StudentEnrollment' || e.role === 'StudentEnrollment',
     );
+    const score = enrollment?.grades?.current_score ?? enrollment?.grades?.final_score;
+    if (score != null && Number.isFinite(score)) {
+      numericScores.push(score);
+    }
     const letter =
       parseEnrollmentLetter(enrollment?.grades?.current_grade) ??
-      scoreToLetter(
-        enrollment?.grades?.current_score ?? enrollment?.grades?.final_score,
-      );
+      scoreToLetter(score);
     if (letter) {
       courseBuckets[letter] += 1;
       studentsWithGrade += 1;
     }
   }
+
+  const studentsEnrolled = studentIds.length;
+  const kpi: GradebookKpi = {
+    studentsEnrolled,
+    studentsWithGrade,
+    percentWithGrade:
+      studentsEnrolled > 0
+        ? Math.round((studentsWithGrade / studentsEnrolled) * 100)
+        : null,
+    medianScore: medianScore(numericScores),
+  };
 
   const assignmentRows = await mapPool(publishedAssignments, 5, async (assignment) => {
     let rubric: CanvasRubric | null = null;
@@ -194,6 +283,7 @@ export async function getCourseGrades(courseId: string): Promise<CourseGradesPay
     }
 
     const subByUser = new Map(submissions.map((s) => [s.user_id, s]));
+    const submissionStatus = countSubmissionStatuses(studentIds, subByUser);
     const buckets = emptyBuckets();
     let notGraded = 0;
     const points = assignment.points_possible ?? 0;
@@ -226,6 +316,7 @@ export async function getCourseGrades(courseId: string): Promise<CourseGradesPay
       grades: buckets,
       notGraded,
       usesRubric: rubric != null,
+      submissionStatus,
     };
   });
 
@@ -234,6 +325,7 @@ export async function getCourseGrades(courseId: string): Promise<CourseGradesPay
     : 'Weighting is proportional to points possible (this course does not use weighted assignment groups).';
 
   return {
+    kpi,
     distribution: {
       labels: ['A', 'B', 'C', 'D', 'F'],
       counts: ['A', 'B', 'C', 'D', 'F'].map((l) => courseBuckets[l as LetterBucket]),
@@ -241,5 +333,6 @@ export async function getCourseGrades(courseId: string): Promise<CourseGradesPay
     },
     assessments: assignmentRows,
     weightingNote,
+    dataSources: [...GRADEBOOK_DATA_SOURCES],
   };
 }

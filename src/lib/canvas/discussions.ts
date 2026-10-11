@@ -7,6 +7,9 @@ type DiscussionTopic = {
   discussion_subentry_count?: number;
   posted_at?: string;
   user_name?: string;
+  is_announcement?: boolean;
+  announcement?: boolean;
+  type?: string;
 };
 
 type DiscussionEntry = {
@@ -40,6 +43,14 @@ export type DiscussionGraph = {
 
 function stripHtml(html: string): string {
   return html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function isAnnouncementTopic(topic: DiscussionTopic): boolean {
+  if (topic.is_announcement === true) return true;
+  if (topic.announcement === true) return true;
+  const type = topic.type?.toLowerCase() ?? '';
+  if (type.includes('announcement')) return true;
+  return false;
 }
 
 function buildGraphFromEntries(entries: DiscussionEntry[]): DiscussionGraph {
@@ -113,10 +124,28 @@ function buildGraphFromEntries(entries: DiscussionEntry[]): DiscussionGraph {
 }
 
 export async function listCourseDiscussions(courseId: string): Promise<DiscussionListItem[]> {
-  const topics = await fetchAllPages<DiscussionTopic>(
-    `/courses/${courseId}/discussion_topics`,
-    { only_announcements: 'false', include: ['all_dates'] },
+  const [discussionTopics, announcementTopics] = await Promise.all([
+    fetchAllPages<DiscussionTopic>(`/courses/${courseId}/discussion_topics`, {
+      only_announcements: 'false',
+    }).catch(() => [] as DiscussionTopic[]),
+    fetchAllPages<DiscussionTopic>(`/courses/${courseId}/discussion_topics`, {
+      only_announcements: 'true',
+    }).catch(() => [] as DiscussionTopic[]),
+  ]);
+
+  const announcementIds = new Set(
+    announcementTopics.filter(isAnnouncementTopic).map((t) => t.id),
   );
+
+  const seen = new Set<number>();
+  const topics: DiscussionTopic[] = [];
+
+  for (const t of discussionTopics) {
+    if (seen.has(t.id)) continue;
+    seen.add(t.id);
+    if (isAnnouncementTopic(t) || announcementIds.has(t.id)) continue;
+    topics.push(t);
+  }
 
   return topics
     .filter((t) => t.title)
@@ -141,6 +170,14 @@ export async function getDiscussionDetail(
       { per_page: '100' },
     ),
   ]);
+
+  if (isAnnouncementTopic(topicMeta)) {
+    return {
+      summary: 'This topic is a course announcement and is hidden from the Discussions view.',
+      graphData: { nodes: [], links: [] },
+    };
+  }
+
   const title = topicMeta?.title ?? 'Discussion';
   const summary = topicMeta?.message
     ? stripHtml(topicMeta.message).slice(0, 500)

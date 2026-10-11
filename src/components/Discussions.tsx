@@ -4,6 +4,8 @@ import dynamic from 'next/dynamic';
 import { Box, List, ListItem, ListItemButton, ListItemText, Typography, Paper, CircularProgress } from '@mui/material';
 import { useCourse } from '@/context/CourseContext';
 import { TabLoader } from '@/components/CourseDataState';
+import { TabDataSourceFooter } from '@/components/TabDataSourceFooter';
+import { useCourseCapabilities } from '@/hooks/useCourseCapabilities';
 import type { DiscussionListItem, DiscussionGraph } from '@/lib/canvas/discussions';
 
 const DiscussionNetwork = dynamic(() => import('./DiscussionNetwork'), {
@@ -20,6 +22,9 @@ const Discussions = () => {
   const [detailSummary, setDetailSummary] = useState('');
   const [graphData, setGraphData] = useState<DiscussionGraph | null>(null);
   const [graphLoading, setGraphLoading] = useState(false);
+  const [listFetchedAt, setListFetchedAt] = useState<Date | null>(null);
+  const [dataSources, setDataSources] = useState<string[]>([]);
+  const { capabilities } = useCourseCapabilities();
 
   const selected = list.find((d) => d.id === selectedId) ?? null;
 
@@ -32,6 +37,8 @@ const Discussions = () => {
         const body = await res.json();
         if (!res.ok) throw new Error(body.error ?? 'Failed to load discussions');
         setList(body.discussions ?? []);
+        setDataSources(body.dataSources ?? []);
+        setListFetchedAt(new Date());
         setSelectedId(body.discussions?.[0]?.id ?? null);
       })
       .catch((e) => {
@@ -73,6 +80,7 @@ const Discussions = () => {
   }
 
   return (
+    <Box>
     <Box sx={{ display: 'flex' }}>
       <Box sx={{ width: 300, borderRight: '1px solid #ddd' }}>
         <List>
@@ -116,6 +124,14 @@ const Discussions = () => {
           </>
         )}
       </Box>
+    </Box>
+    {dataSources.length > 0 && (
+      <TabDataSourceFooter
+        sources={dataSources}
+        fetchedAt={listFetchedAt}
+        note={capabilities?.tabNotes.discussions}
+      />
+    )}
     </Box>
   );
 };

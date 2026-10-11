@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getWeeklyActivity } from '@/lib/canvas/activity';
+import { getCourseEngagement } from '@/lib/canvas/engagement';
 import { getCourseGrades } from '@/lib/canvas/grades';
 import { listCourseDiscussions } from '@/lib/canvas/discussions';
 import { getCourseStudents } from '@/lib/canvas/students';
@@ -8,7 +8,7 @@ import { handleRouteError } from '@/lib/api/errors';
 export const dynamic = 'force-dynamic';
 
 type Params = { params: Promise<{ courseId: string }> };
-type TabKey = 'grades' | 'activity' | 'students' | 'discussions';
+type TabKey = 'grades' | 'engagement' | 'students' | 'discussions';
 
 export async function GET(request: Request, { params }: Params) {
   try {
@@ -19,20 +19,26 @@ export async function GET(request: Request, { params }: Params) {
       const grades = await getCourseGrades(courseId);
       const total = grades.distribution.counts.reduce((a, b) => a + b, 0);
       const [a, b, , d, f] = grades.distribution.counts;
+      const { kpi } = grades;
+      const heavyMissing = grades.assessments.filter(
+        (row) => row.submissionStatus.missing > row.submissionStatus.submitted,
+      ).length;
       return NextResponse.json({
-        summary: `Course grade distribution (${total} students with scores): ${a} earned A, ${b} earned B, ${d} earned D, ${f} earned F. Review assessments with heavy F counts (often missing submissions).`,
+        summary: `${kpi.studentsEnrolled} students enrolled; ${kpi.percentWithGrade ?? 0}% have a current grade (median ${kpi.medianScore ?? 'n/a'}%). Letter buckets (${total} with A–F): ${a} A, ${b} B, ${d} D, ${f} F. ${heavyMissing} assignments have more missing than on-time submissions.`,
       });
     }
 
-    if (tab === 'activity') {
-      const { chart } = await getWeeklyActivity(courseId);
-      const peak = chart.pageViews.indexOf(Math.max(...chart.pageViews));
+    if (tab === 'engagement') {
+      const { chart, content } = await getCourseEngagement(courseId);
+      const peak = chart.pageViews.length
+        ? chart.pageViews.indexOf(Math.max(...chart.pageViews))
+        : -1;
       const latest = chart.participations.at(-1) ?? 0;
       const prev = chart.participations.at(-2) ?? 0;
-      const trend =
-        latest >= prev ? 'stable or rising' : 'declining';
+      const trend = latest >= prev ? 'stable or rising' : 'declining';
+      const published = content.filter((c) => c.published).length;
       return NextResponse.json({
-        summary: `Weekly engagement peaks around ${chart.labels[peak] ?? 'mid-term'} (${chart.note}). Recent participation trend looks ${trend} compared to the prior week.`,
+        summary: `Semester activity peaks around ${chart.labels[peak] ?? 'mid-term'}. Recent participation looks ${trend} vs the prior week. ${content.length} course content items (${published} published); assignment analytics attached where Canvas provides them.`,
       });
     }
 
@@ -40,9 +46,10 @@ export async function GET(request: Request, { params }: Params) {
       const students = await getCourseStudents(courseId);
       const withGrades = students.filter((s) => s.grade != null);
       const atRisk = withGrades.filter((s) => (s.grade ?? 100) < 70);
+      const highMissing = students.filter((s) => s.missingWorkLabel === 'High missing').length;
       const engaged = [...students].sort((a, b) => b.participations - a.participations)[0];
       return NextResponse.json({
-        summary: `${students.length} students on the roster; ${atRisk.length} below 70%. Highest participation: ${engaged?.name ?? 'n/a'} (${engaged?.participations ?? 0} participations, ${engaged?.pagesViewed ?? 0} page views in Canvas analytics).`,
+        summary: `${students.length} students on the roster; ${atRisk.length} below 70%; ${highMissing} flagged high missing work from analytics. Highest participation: ${engaged?.name ?? 'n/a'} (${engaged?.participations ?? 0} participations, ${engaged?.pagesViewed ?? 0} page views).`,
       });
     }
 
