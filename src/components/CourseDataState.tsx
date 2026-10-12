@@ -3,11 +3,13 @@
 import React from 'react';
 import { Alert, Box, CircularProgress } from '@mui/material';
 import { useCourse } from '@/context/CourseContext';
+import { useCanvasAuth } from '@/context/CanvasAuthContext';
 
 export function CourseShell({ children }: { children: React.ReactNode }) {
   const { loading, error, courseId } = useCourse();
+  const { authReady } = useCanvasAuth();
 
-  if (loading) {
+  if (!authReady || loading) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
         <CircularProgress />
@@ -18,7 +20,8 @@ export function CourseShell({ children }: { children: React.ReactNode }) {
   if (error) {
     return (
       <Alert severity="warning" sx={{ m: 2 }}>
-        {error}. Add CANVAS_API_URL and CANVAS_API_TOKEN to `.env.local` (see canvas.env.template).
+        {error}. Open Settings in the sidebar, paste your Canvas personal access token, and click Save
+        token.
       </Alert>
     );
   }

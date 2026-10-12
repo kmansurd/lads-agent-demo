@@ -15,11 +15,15 @@ import {
 import { DataGrid, GridColDef } from '@mui/x-data-grid';
 import { Box, Typography, Alert, Chip, Slider, Stack } from '@mui/material';
 import { useCourse } from '@/context/CourseContext';
+import { fetchWithCanvasAuth } from '@/lib/client/canvasTokenStorage';
 import { TabLoader } from '@/components/CourseDataState';
 import { ActivityPatternPanel } from '@/components/ActivityPatternPanel';
 import { TabDataSourceFooter } from '@/components/TabDataSourceFooter';
 import { useCourseCapabilities } from '@/hooks/useCourseCapabilities';
 import { useCourseData } from '@/hooks/useCourseData';
+import { getChartSeries, lineChartOptions } from '@/lib/chartDefaults';
+import { useColorMode } from '@/context/ColorModeContext';
+import { chartPanelSx, dataGridShellSx, getApplePalette } from '@/theme/appleTheme';
 import { analyzeDailyAccess, type TimeOfDayPattern } from '@/lib/canvas/activityPatterns';
 import type { CourseEngagementPayload } from '@/lib/canvas/engagement';
 import type { CourseContentType, CourseContentRow } from '@/lib/canvas/courseContentCatalog';
@@ -126,6 +130,8 @@ const Engagement = () => {
   const { courseId } = useCourse();
   const { data, loading, error, fetchedAt } = useCourseData<CourseEngagementPayload>('engagement');
   const { capabilities } = useCourseCapabilities();
+  const { resolvedMode } = useColorMode();
+  const chartSeries = getChartSeries(resolvedMode);
 
   const [dailyActivity, setDailyActivity] = useState<DailyActivityPoint[]>([]);
   const [content, setContent] = useState<CourseContentRow[]>([]);
@@ -135,6 +141,13 @@ const Engagement = () => {
   const [startIdx, setStartIdx] = useState(0);
   const [endIdx, setEndIdx] = useState(0);
   const [contentLoading, setContentLoading] = useState(false);
+
+  useEffect(() => {
+    setSemesterStartIso('');
+    setStartIdx(0);
+    setEndIdx(0);
+    setMaxDayIndex(0);
+  }, [courseId]);
 
   useEffect(() => {
     if (!data) return;
@@ -199,7 +212,7 @@ const Engagement = () => {
     const { start, end } = indicesToIso(semesterStartIso, startIdx, endIdx);
     setContentLoading(true);
     try {
-      const res = await fetch(
+      const res = await fetchWithCanvasAuth(
         `/api/courses/${courseId}/engagement?start=${start}&end=${end}&contentOnly=1`,
       );
       const body = (await res.json()) as CourseEngagementPayload;
@@ -252,45 +265,51 @@ const Engagement = () => {
         label: 'Page Views',
         data: chartBundle.pageViews,
         fill: false,
-        borderColor: 'rgb(75, 192, 192)',
-        tension: 0.1,
+        borderColor: chartSeries.primary,
+        backgroundColor: chartSeries.primary,
+        tension: 0.35,
         yAxisID: 'y',
       },
       {
         label: 'Participations',
         data: chartBundle.participations,
         fill: false,
-        borderColor: 'rgb(255, 99, 132)',
-        tension: 0.1,
+        borderColor: chartSeries.secondary,
+        backgroundColor: chartSeries.secondary,
+        tension: 0.35,
         yAxisID: 'y1',
       },
     ],
   };
 
-  const chartOptions = {
-    responsive: true,
-    maintainAspectRatio: false,
-    interaction: { mode: 'index' as const, intersect: false },
-    plugins: {
-      legend: { position: 'top' as const },
-      title: { display: true, text: 'Weekly course activity' },
-    },
+  const chartOptions = lineChartOptions('Weekly course activity', resolvedMode, {
     scales: {
       y: {
-        type: 'linear' as const,
+        type: 'linear',
         display: true,
-        position: 'left' as const,
-        title: { display: true, text: 'Page Views' },
+        position: 'left',
+        title: {
+          display: true,
+          text: 'Page views',
+          color: getApplePalette(resolvedMode).textSecondary,
+          font: { size: 11 },
+        },
       },
       y1: {
-        type: 'linear' as const,
+        type: 'linear',
         display: true,
-        position: 'right' as const,
+        position: 'right',
         grid: { drawOnChartArea: false },
-        title: { display: true, text: 'Participations' },
+        title: {
+          display: true,
+          text: 'Participations',
+          color: getApplePalette(resolvedMode).textSecondary,
+          font: { size: 11 },
+        },
+        ticks: { color: getApplePalette(resolvedMode).textSecondary },
       },
     },
-  };
+  });
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3, height: '100%' }}>
@@ -335,8 +354,8 @@ const Engagement = () => {
       </Box>
 
       {hasChartData ? (
-        <Box sx={{ height: 300 }}>
-          <Line options={chartOptions} data={weeklyActivityData} />
+        <Box sx={{ ...chartPanelSx, height: 340 }}>
+          <Line key={resolvedMode} options={chartOptions} data={weeklyActivityData} />
         </Box>
       ) : (
         <Typography color="text.secondary" sx={{ py: 4, textAlign: 'center' }}>
@@ -361,7 +380,12 @@ const Engagement = () => {
           they count Canvas Analytics participation URLs in the range (strongest for assignments/LTI).
           Submissions use assignment <code>submitted_at</code> in the same range.
         </Typography>
-        <Box sx={{ height: Math.max(280, Math.min(560, 56 + content.length * 52)) }}>
+        <Box
+          sx={{
+            ...dataGridShellSx,
+            height: Math.max(280, Math.min(560, 56 + content.length * 52)),
+          }}
+        >
           <DataGrid
             rows={content}
             columns={contentColumns}

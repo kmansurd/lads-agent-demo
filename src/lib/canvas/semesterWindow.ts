@@ -19,7 +19,7 @@ function localNoon(year: number, monthIndex: number, day: number): Date {
   return new Date(year, monthIndex, day, 12, 0, 0, 0);
 }
 
-function semesterBounds(
+export function semesterBounds(
   kind: SemesterKind,
   year: number,
 ): { start: Date; end: Date } {
@@ -36,6 +36,32 @@ function semesterBounds(
 function containsDate(date: Date, start: Date, end: Date): boolean {
   const t = date.getTime();
   return t >= start.getTime() && t <= end.getTime();
+}
+
+/** Parse Canvas enrollment term labels such as "2023-24 FALL" or "2025-26 SPRING". */
+export function parseTermNameToSemester(
+  name: string | null | undefined,
+): { kind: SemesterKind; year: number } | null {
+  if (!name?.trim()) return null;
+  const upper = name.toUpperCase();
+  const kind: SemesterKind | null = upper.includes('SPRING')
+    ? 'Spring'
+    : upper.includes('FALL')
+      ? 'Fall'
+      : null;
+  if (!kind) return null;
+  const match = name.match(/(\d{4})/);
+  if (!match) return null;
+  return { kind, year: Number(match[1]) };
+}
+
+export function semesterWindowFromKindYear(
+  kind: SemesterKind,
+  year: number,
+  sourceNote: string,
+): SemesterWindow {
+  const bounds = semesterBounds(kind, year);
+  return { kind, year, start: bounds.start, end: bounds.end, sourceNote };
 }
 
 /**

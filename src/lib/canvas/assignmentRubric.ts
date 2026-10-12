@@ -1,3 +1,4 @@
+import { assignRating, criteriaFromRubric } from './rubricCatalog';
 import { canvasRequest, fetchAllPages } from './client';
 
 export type RubricComment = {
@@ -14,6 +15,8 @@ export type RubricCriterionSummary = {
   averagePoints: number | null;
   gradedCount: number;
   ratings: { label: string; count: number }[];
+  ratingCountsByKey: Record<string, number>;
+  totalRatingCount: number;
   comments: RubricComment[];
   commentCount: number;
 };
@@ -383,14 +386,19 @@ export async function getAssignmentRubricDetail(
     markerCounts.set(markerId, (markerCounts.get(markerId) ?? 0) + 1);
   }
 
+  const catalogCriteria = criteriaFromRubric(criteria);
+  const catalogById = new Map(catalogCriteria.map((item) => [item.id, item]));
+
   const criterionSummaries: RubricCriterionSummary[] = criteria.map((criterion) => {
     const id = String(criterion.id ?? '');
+    const catalogCriterion = catalogById.get(id);
     const ratingLabels = new Map<string, string>();
     for (const rating of criterion.ratings ?? []) {
       if (rating.id == null) continue;
       ratingLabels.set(String(rating.id), stripHtml(rating.description || `${rating.points ?? ''} pts`));
     }
     const ratingCounts = new Map<string, number>();
+    const ratingCountsByKey: Record<string, number> = {};
     const pointValues: number[] = [];
     const comments: RubricComment[] = [];
     let commentCount = 0;
@@ -401,6 +409,10 @@ export async function getAssignmentRubricDetail(
       if (mark.points != null) pointValues.push(mark.points);
       const label = (mark.ratingId && ratingLabels.get(mark.ratingId)) || (mark.points != null ? `${mark.points} pts` : '');
       if (label) ratingCounts.set(label, (ratingCounts.get(label) ?? 0) + 1);
+      if (catalogCriterion) {
+        const key = assignRating(catalogCriterion, mark);
+        if (key) ratingCountsByKey[key] = (ratingCountsByKey[key] ?? 0) + 1;
+      }
       const text = stripHtml(mark.comments);
       if (!text) continue;
       commentCount += 1;
@@ -414,6 +426,20 @@ export async function getAssignmentRubricDetail(
       });
     }
 
+    const ratings: { label: string; count: number }[] = [];
+    for (const rating of criterion.ratings ?? []) {
+      if (rating.id == null) continue;
+      const label =
+        ratingLabels.get(String(rating.id)) ??
+        stripHtml(rating.description || `${rating.points ?? ''} pts`);
+      ratings.push({ label, count: ratingCounts.get(label) ?? 0 });
+    }
+    for (const [label, count] of ratingCounts) {
+      if (!ratings.some((item) => item.label === label)) ratings.push({ label, count });
+    }
+
+    const totalRatingCount = Object.values(ratingCountsByKey).reduce((sum, count) => sum + count, 0);
+
     return {
       id,
       description: stripHtml(criterion.description || 'Criterion'),
@@ -421,9 +447,9 @@ export async function getAssignmentRubricDetail(
       ignoreForScoring: criterion.ignore_for_scoring === true,
       averagePoints: average(pointValues),
       gradedCount: pointValues.length,
-      ratings: [...ratingCounts.entries()]
-        .map(([label, count]) => ({ label, count }))
-        .sort((a, b) => b.count - a.count),
+      ratings,
+      ratingCountsByKey,
+      totalRatingCount,
       comments,
       commentCount,
     };

@@ -16,6 +16,8 @@ import {
   ToggleButton,
   ToggleButtonGroup,
   Typography,
+  useTheme,
+  alpha,
 } from '@mui/material';
 import type { DiscussionPost } from '@/lib/canvas/discussions';
 import {
@@ -30,9 +32,29 @@ import {
   type EnaWindow,
 } from '@/lib/ena/analyze';
 
-const BLUE = '#1565c0';
-const ORANGE = '#ef6c00';
-const INK = '#263238';
+type EnaMapColors = {
+  blue: string;
+  orange: string;
+  ink: string;
+  studentMuted: string;
+  ideaFill: string;
+  ideaFillActive: string;
+  markBg: string;
+};
+
+function useEnaMapColors(): EnaMapColors {
+  const theme = useTheme();
+  const isDark = theme.palette.mode === 'dark';
+  return {
+    blue: theme.palette.primary.main,
+    orange: isDark ? '#ff9f0a' : '#bf4800',
+    ink: theme.palette.text.primary,
+    studentMuted: isDark ? '#98989d' : '#b0bec5',
+    ideaFill: theme.palette.background.paper,
+    ideaFillActive: isDark ? alpha(theme.palette.primary.main, 0.35) : '#e3f2fd',
+    markBg: isDark ? 'rgba(255, 159, 10, 0.35)' : 'rgba(255, 149, 0, 0.18)',
+  };
+}
 
 type DiscussionEnaProps = {
   posts: DiscussionPost[];
@@ -53,7 +75,7 @@ function times(count: number): string {
   return `${count} ${count === 1 ? 'time' : 'times'}`;
 }
 
-function Highlight({ text, terms }: { text: string; terms: string[] }) {
+function Highlight({ text, terms, markBg }: { text: string; terms: string[]; markBg: string }) {
   const parts = terms
     .map((term) => term.trim())
     .filter(Boolean)
@@ -71,7 +93,7 @@ function Highlight({ text, terms }: { text: string; terms: string[] }) {
     <>
       {text.split(splitter).map((part, index) =>
         exact.test(part) ? (
-          <Box key={`${part}-${index}`} component="mark" sx={{ bgcolor: '#fff3bf', px: 0.25 }}>
+          <Box key={`${part}-${index}`} component="mark" sx={{ bgcolor: markBg, color: 'text.primary', px: 0.25, borderRadius: 0.5 }}>
             {part}
           </Box>
         ) : (
@@ -109,12 +131,15 @@ function MapView({
   ideas,
   selected,
   onSelect,
+  colors,
 }: {
   model: EnaModel;
   ideas: EnaIdea[];
   selected: string | null;
   onSelect: (key: string) => void;
+  colors: EnaMapColors;
 }) {
+  const { blue: BLUE, orange: ORANGE, ink: INK, studentMuted, ideaFill, ideaFillActive } = colors;
   const width = 760;
   const height = 420;
   const pad = 78;
@@ -141,8 +166,15 @@ function MapView({
   const labelFor = (id: string) => ideas.find((idea) => idea.id === id)?.label ?? id;
 
   return (
-    <Box sx={{ width: '100%', overflow: 'hidden' }}>
-      <svg viewBox={`0 0 ${width} ${height}`} width="100%" role="group" aria-label="Idea connection map">
+    <Box sx={{ width: '100%', overflow: 'hidden', aspectRatio: `${width} / ${height}` }}>
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        width="100%"
+        height="100%"
+        preserveAspectRatio="xMidYMid meet"
+        role="group"
+        aria-label="Idea connection map"
+      >
         {model.edges.map((edge) => {
           const source = nodeById.get(edge.source);
           const target = nodeById.get(edge.target);
@@ -180,7 +212,7 @@ function MapView({
                 cx={spot.x}
                 cy={spot.y}
                 r={isA || isB ? 6 : 3.5}
-                fill={isA ? BLUE : isB ? ORANGE : '#b0bec5'}
+                fill={isA ? BLUE : isB ? ORANGE : studentMuted}
                 opacity={isA || isB || model.mode === 'class' ? 0.95 : 0.55}
               >
                 <title>{student.label}</title>
@@ -215,7 +247,14 @@ function MapView({
           const text = displayLabel(labelFor(node.id));
           return (
             <g key={node.id} onClick={() => onSelect(node.id)} style={{ cursor: 'pointer' }}>
-              <circle cx={spot.x} cy={spot.y} r={active ? 9 : 7} fill={active ? '#e3f2fd' : '#fff'} stroke={INK} strokeWidth={1.5} />
+              <circle
+                cx={spot.x}
+                cy={spot.y}
+                r={active ? 9 : 7}
+                fill={active ? ideaFillActive : ideaFill}
+                stroke={INK}
+                strokeWidth={1.5}
+              />
               <text
                 x={labelX}
                 y={labelY}
@@ -236,6 +275,8 @@ function MapView({
 }
 
 const DiscussionEna = ({ posts, prompt, loading }: DiscussionEnaProps) => {
+  const theme = useTheme();
+  const enaColors = useEnaMapColors();
   const suggested = useMemo(() => suggestIdeas(posts, prompt), [posts, prompt]);
   const [ideas, setIdeas] = useState<EnaIdea[]>(suggested);
   const [usingSuggested, setUsingSuggested] = useState(true);
@@ -326,17 +367,27 @@ const DiscussionEna = ({ posts, prompt, loading }: DiscussionEnaProps) => {
     setDraftNote(mentioned ? null : 'No post contains that phrase yet. It will appear here if you add posts that use it.');
   };
 
-  if (loading) {
-    return (
-      <Paper elevation={3} sx={{ p: 2, mb: 2, minHeight: 160, display: 'flex', alignItems: 'center', gap: 2 }}>
-        <CircularProgress size={22} />
-        <Typography>Reading the discussion posts…</Typography>
-      </Paper>
-    );
-  }
+  const initialLoad = loading && posts.length === 0;
+  const refreshing = loading && posts.length > 0;
 
   return (
-    <Paper elevation={3} sx={{ p: 2, mb: 2 }}>
+    <Paper sx={{ p: { xs: 2, sm: 2.5 }, mb: 2, position: 'relative' }}>
+      {refreshing ? (
+        <Box
+          sx={{
+            position: 'absolute',
+            inset: 0,
+            zIndex: 2,
+            bgcolor: alpha(theme.palette.background.paper, 0.88),
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            borderRadius: 1,
+          }}
+        >
+          <CircularProgress size={28} />
+        </Box>
+      ) : null}
       <Typography variant="h6">Idea connections</Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, maxWidth: 760 }}>
         This map shows which ideas students bring up together in this discussion. Thicker lines are the links they
@@ -362,10 +413,26 @@ const DiscussionEna = ({ posts, prompt, loading }: DiscussionEnaProps) => {
         </Typography>
       </Box>
 
-      {posts.length < 2 ? (
-        <Typography sx={{ mt: 2 }} color="text.secondary">
-          This topic needs a few student posts before idea connections will show up.
-        </Typography>
+      {initialLoad ? (
+        <Box
+          sx={{
+            mt: 2,
+            minHeight: 420,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 2,
+          }}
+        >
+          <CircularProgress size={22} />
+          <Typography color="text.secondary">Reading the discussion posts…</Typography>
+        </Box>
+      ) : posts.length < 2 ? (
+        <Box sx={{ mt: 2, minHeight: 420, display: 'flex', alignItems: 'center' }}>
+          <Typography color="text.secondary">
+            This topic needs a few student posts before idea connections will show up.
+          </Typography>
+        </Box>
       ) : (
         <>
           <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center', mt: 2 }}>
@@ -484,24 +551,29 @@ const DiscussionEna = ({ posts, prompt, loading }: DiscussionEnaProps) => {
             </Typography>
           ) : (
             <>
-              <MapView
-                model={model}
-                ideas={ideas}
-                selected={selectedKey}
-                onSelect={(key) => {
-                  const edge = model.edges.find((item) => edgeKey(item) === key);
-                  if (edge) {
-                    setSelectedKey(key);
-                    setShowAllEvidence(false);
-                    return;
-                  }
-                  const attached = model.edges.find((item) => item.source === key || item.target === key);
-                  if (attached) {
-                    setSelectedKey(edgeKey(attached));
-                    setShowAllEvidence(false);
-                  }
-                }}
-              />
+              <Box sx={{ minHeight: 420 }}>
+                <MapView
+                  model={model}
+                  ideas={ideas}
+                  selected={selectedKey}
+                  colors={enaColors}
+                  onSelect={(key) => {
+                    const edge = model.edges.find((item) => edgeKey(item) === key);
+                    if (edge) {
+                      setSelectedKey(key);
+                      setShowAllEvidence(false);
+                      return;
+                    }
+                    const attached = model.edges.find(
+                      (item) => item.source === key || item.target === key,
+                    );
+                    if (attached) {
+                      setSelectedKey(edgeKey(attached));
+                      setShowAllEvidence(false);
+                    }
+                  }}
+                />
+              </Box>
               <Typography variant="body2" sx={{ mt: 0.5 }}>
                 {model.mode === 'difference'
                   ? `Blue lines are stronger for ${prettyName(model.nameA)}. Orange lines are stronger for ${prettyName(model.nameB ?? 'the other group')}.`
@@ -522,7 +594,7 @@ const DiscussionEna = ({ posts, prompt, loading }: DiscussionEnaProps) => {
               <Typography sx={{ mt: 1.5 }}>{leadSentence(model, model.edges[0])}</Typography>
 
               {selected ? (
-                <Box sx={{ mt: 2, p: 1.5, bgcolor: '#f7f9fc', borderRadius: 1 }}>
+                <Box sx={{ mt: 2, p: 1.5, bgcolor: 'action.hover', borderRadius: 2, border: '1px solid', borderColor: 'divider' }}>
                   <Typography variant="subtitle2">
                     Posts that link {displayLabel(selected.source)} with {displayLabel(selected.target)}
                   </Typography>
@@ -542,7 +614,11 @@ const DiscussionEna = ({ posts, prompt, loading }: DiscussionEnaProps) => {
                             : ''}
                         </Typography>
                         <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', mt: 0.25 }}>
-                          <Highlight text={item.message.slice(0, 500)} terms={selectedIdeas.flatMap((idea) => idea.terms)} />
+                          <Highlight
+                            text={item.message.slice(0, 500)}
+                            terms={selectedIdeas.flatMap((idea) => idea.terms)}
+                            markBg={enaColors.markBg}
+                          />
                         </Typography>
                         {item.context.map((context) => (
                           <Typography key={context.excerpt} variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>

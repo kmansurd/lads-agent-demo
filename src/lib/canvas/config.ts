@@ -1,6 +1,11 @@
 const CANVAS_API_PATH = /^\/api\/v\d+\/?$/;
 
-function validateCanvasApiUrl(baseUrl: string): void {
+export type CanvasConfig = {
+  baseUrl: string;
+  token: string;
+};
+
+export function validateCanvasApiUrl(baseUrl: string): void {
   let url: URL;
   try {
     url = new URL(baseUrl);
@@ -17,9 +22,30 @@ function validateCanvasApiUrl(baseUrl: string): void {
   }
 }
 
-export function getCanvasConfig() {
+/** Header sent from the browser; never logged or persisted server-side. */
+export const CANVAS_ACCESS_TOKEN_HEADER = 'X-Canvas-Access-Token';
+
+export function resolveCanvasConfigFromRequest(request: Request): CanvasConfig | null {
   const baseUrl = process.env.CANVAS_API_URL?.replace(/\/$/, '');
-  const token = process.env.CANVAS_API_TOKEN;
+  if (!baseUrl) {
+    return null;
+  }
+
+  validateCanvasApiUrl(baseUrl);
+
+  const headerToken = request.headers.get(CANVAS_ACCESS_TOKEN_HEADER)?.trim();
+  const envToken = process.env.CANVAS_API_TOKEN?.trim();
+  const token = headerToken || envToken;
+  if (!token) {
+    return null;
+  }
+
+  return { baseUrl, token };
+}
+
+export function getEnvCanvasConfig(): CanvasConfig | null {
+  const baseUrl = process.env.CANVAS_API_URL?.replace(/\/$/, '');
+  const token = process.env.CANVAS_API_TOKEN?.trim();
 
   if (!baseUrl || !token) {
     return null;

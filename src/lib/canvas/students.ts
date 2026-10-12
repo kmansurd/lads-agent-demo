@@ -1,4 +1,5 @@
-import { fetchAllPages } from './client';
+import { canvasRequest, fetchAllPages } from './client';
+import type { CanvasCourseTimeline } from './courseTimeline';
 import { resolveEngagementRange, type EngagementRangeMeta } from './engagementRange';
 import { STUDENT_ACTIVITY_CAP, rollupStudentActivityInRange } from './studentActivityRollup';
 import { missingWorkFromSummary } from './studentTardiness';
@@ -70,8 +71,10 @@ export async function getCourseStudents(
   courseId: string,
   options: { start?: string | null; end?: string | null; includeActivity?: boolean } = {},
 ): Promise<CourseStudentsPayload> {
-  const { range, meta } = resolveEngagementRange(options.start, options.end);
-  const [summaries, users, enrollments] = await Promise.all([
+  const [courseDetail, summaries, users, enrollments] = await Promise.all([
+    canvasRequest<CanvasCourseTimeline>(`/courses/${courseId}`, {
+      'include[]': ['term'],
+    }),
     fetchAllPages<StudentSummary>(`/courses/${courseId}/analytics/student_summaries`).catch(
       () => [] as StudentSummary[],
     ),
@@ -83,6 +86,11 @@ export async function getCourseStudents(
       'state[]': ['active', 'invited', 'completed'],
     }),
   ]);
+
+  const { range, meta } = resolveEngagementRange(options.start, options.end, {
+    course: courseDetail,
+    termLabel: courseDetail.term?.name,
+  });
 
   const userById = new Map(users.map((u) => [u.id, u]));
   const enrollmentByUser = new Map(enrollments.map((e) => [e.user_id, e]));

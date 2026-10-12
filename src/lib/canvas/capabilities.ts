@@ -109,7 +109,7 @@ function buildTabNotes(
 
   const discussionsNote =
     discussions === 'ok'
-      ? 'Discussion posts come from the full discussion view. Idea connections are an epistemic network analysis of those posts.'
+      ? 'Course-wide posts come from course discussion threads. When the course has groups, the Groups tab loads that group’s discussion threads. Idea connections are an epistemic network analysis of the posts in view.'
       : `Discussions API ${labelAccess(discussions)}.`;
 
   return {

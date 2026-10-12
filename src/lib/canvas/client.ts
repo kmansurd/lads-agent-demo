@@ -1,4 +1,9 @@
-import { getCanvasConfig } from './config';
+import { getEnvCanvasConfig } from './config';
+import { readRequestCanvasConfig } from './canvasAuthBridge';
+
+function getCanvasConfig() {
+  return readRequestCanvasConfig() ?? getEnvCanvasConfig();
+}
 
 const MAX_PAGES = 50;
 const USER_AGENT = 'lads-agent-demo/0.1 (Canvas REST BFF)';
@@ -26,7 +31,7 @@ export async function canvasRequest<T>(
   const config = getCanvasConfig();
   if (!config) {
     throw new CanvasApiError(
-      'Canvas is not configured. Set CANVAS_API_URL and CANVAS_API_TOKEN in .env.local',
+      'Canvas is not configured. Set CANVAS_API_URL on the server and add your access token under Settings.',
       503,
     );
   }
@@ -73,7 +78,7 @@ export async function fetchAllPages<T>(
   const config = getCanvasConfig();
   if (!config) {
     throw new CanvasApiError(
-      'Canvas is not configured. Set CANVAS_API_URL and CANVAS_API_TOKEN in .env.local',
+      'Canvas is not configured. Set CANVAS_API_URL on the server and add your access token under Settings.',
       503,
     );
   }

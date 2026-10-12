@@ -1,8 +1,19 @@
 
 import React, { useState, useEffect, useRef, forwardRef, useImperativeHandle } from 'react';
-import { Box, Fab, Popover, TextField, Button, Typography, List, ListItem, ListItemText, IconButton } from '@mui/material';
-import ChatIcon from '@mui/icons-material/Chat';
+import {
+  Box,
+  Popover,
+  TextField,
+  Button,
+  Typography,
+  List,
+  ListItem,
+  IconButton,
+  alpha,
+} from '@mui/material';
+import AutoStoriesOutlinedIcon from '@mui/icons-material/AutoStoriesOutlined';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import CloseIcon from '@mui/icons-material/Close';
 
 export interface ChatBubbleHandle {
   openChat: () => void;
@@ -14,35 +25,46 @@ interface ChatBubbleProps {
 }
 
 const ChatBubble = forwardRef<ChatBubbleHandle, ChatBubbleProps>(({ currentTab }, ref) => {
-  const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
+  const anchorRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
   const [question, setQuestion] = useState('');
   const [messages, setMessages] = useState<{ text: string; sender: 'user' | 'bot' }[]>([]);
-  const messagesEndRef = useRef<null | HTMLDivElement>(null);
-  const fabRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    setAnchorEl(anchorRef.current);
+  }, []);
 
   useImperativeHandle(ref, () => ({
     openChat: () => {
-      setAnchorEl(fabRef.current);
+      setOpen(true);
     },
     addMessage: (text: string, sender: 'user' | 'bot') => {
       setMessages((prev) => [...prev, { text, sender }]);
-    }
+    },
   }));
 
   const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    const container = messagesContainerRef.current;
+    if (container) {
+      container.scrollTop = container.scrollHeight;
+      return;
+    }
+    messagesEndRef.current?.scrollIntoView({ block: 'nearest' });
   };
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages]);
+  }, [messages, open]);
 
-  const handleClick = (event: React.MouseEvent<HTMLElement>) => {
-    setAnchorEl(event.currentTarget);
+  const handleToggle = () => {
+    setOpen((wasOpen) => !wasOpen);
   };
 
   const handleClose = () => {
-    setAnchorEl(null);
+    setOpen(false);
   };
 
   const handleRestart = () => {
@@ -52,84 +74,177 @@ const ChatBubble = forwardRef<ChatBubbleHandle, ChatBubbleProps>(({ currentTab }
   const handleAsk = () => {
     if (!question.trim()) return;
 
-    const newMessages = [...messages, { text: question, sender: 'user' as const }];
+    const asked = question;
+    const newMessages = [...messages, { text: asked, sender: 'user' as const }];
     setMessages(newMessages);
     setQuestion('');
 
-    // Mock response
     setTimeout(() => {
       setMessages((prev) => [
         ...prev,
         {
-          text: `I see you are asking about "${question}" while looking at the ${currentTab}. How can I help you more with ${currentTab}?`,
+          text: `I see you are asking about "${asked}" while looking at the ${currentTab}. How can I help you more with ${currentTab}?`,
           sender: 'bot',
         },
       ]);
     }, 500);
   };
 
-  const open = Boolean(anchorEl);
-  const id = open ? 'simple-popover' : undefined;
+  const id = open ? 'data-storyteller-popover' : undefined;
 
   return (
     <>
-      <Fab ref={fabRef} color="primary" aria-label="chat" sx={{ position: 'fixed', bottom: 16, right: 16 }} onClick={handleClick}>
-        <ChatIcon />
-      </Fab>
+      <Box
+        ref={anchorRef}
+        sx={{
+          position: 'fixed',
+          bottom: 20,
+          right: 20,
+          zIndex: 1200,
+          pointerEvents: 'none',
+        }}
+      >
+        <Box
+          component="button"
+          type="button"
+          onClick={handleToggle}
+          aria-label="Open Data Storyteller"
+          aria-expanded={open}
+          aria-controls={id}
+          sx={{
+            pointerEvents: 'auto',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 1,
+            px: { xs: 1.5, sm: 2 },
+            py: 1,
+            border: '1px solid',
+            borderColor: (theme) => alpha(theme.palette.text.primary, 0.12),
+            borderRadius: 980,
+            cursor: 'pointer',
+            font: 'inherit',
+            color: 'text.secondary',
+            backgroundColor: (theme) => alpha(theme.palette.background.paper, 0.65),
+            backdropFilter: 'saturate(180%) blur(16px)',
+            WebkitBackdropFilter: 'saturate(180%) blur(16px)',
+            boxShadow: '0 2px 12px rgba(0, 0, 0, 0.06)',
+            transition: 'background-color 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease',
+            '&:hover': {
+              color: 'text.primary',
+              backgroundColor: (theme) => alpha(theme.palette.background.paper, 0.82),
+              borderColor: (theme) => alpha(theme.palette.text.primary, 0.18),
+              boxShadow: '0 4px 16px rgba(0, 0, 0, 0.08)',
+            },
+            '&:focus-visible': {
+              outline: '2px solid',
+              outlineColor: 'primary.main',
+              outlineOffset: 2,
+            },
+          }}
+        >
+          <AutoStoriesOutlinedIcon sx={{ fontSize: 20, opacity: 0.85 }} />
+          <Typography
+            component="span"
+            variant="body2"
+            sx={{
+              fontWeight: 500,
+              letterSpacing: '-0.01em',
+              display: { xs: 'none', sm: 'inline' },
+            }}
+          >
+            Data Storyteller
+          </Typography>
+        </Box>
+      </Box>
       <Popover
         id={id}
         open={open}
         anchorEl={anchorEl}
         onClose={handleClose}
-        anchorOrigin={{
-          vertical: 'top',
-          horizontal: 'left',
-        }}
-        transformOrigin={{
-          vertical: 'bottom',
-          horizontal: 'right',
+        disableScrollLock
+        anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
+        transformOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+        slotProps={{
+          paper: {
+            sx: {
+              width: { xs: 320, sm: 380 },
+              maxWidth: 'calc(100vw - 32px)',
+              mt: -1,
+            },
+          },
         }}
       >
-        <Box sx={{ p: 2, width: 350, height: 450, display: 'flex', flexDirection: 'column' }}>
-          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-            <Typography variant="h6">
-              Assistant ({currentTab})
-            </Typography>
-            <IconButton onClick={handleRestart} size="small" title="Restart Chat">
-              <RefreshIcon />
-            </IconButton>
+        <Box sx={{ p: 2.5, height: 460, display: 'flex', flexDirection: 'column' }}>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 1.5 }}>
+            <Box>
+              <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+                Data Storyteller
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                {currentTab} tab
+              </Typography>
+            </Box>
+            <Box>
+              <IconButton onClick={handleRestart} size="small" title="Restart chat" aria-label="Restart chat">
+                <RefreshIcon fontSize="small" />
+              </IconButton>
+              <IconButton onClick={handleClose} size="small" title="Close" aria-label="Close chat">
+                <CloseIcon fontSize="small" />
+              </IconButton>
+            </Box>
           </Box>
-          <Box sx={{ flexGrow: 1, overflowY: 'auto', mb: 2, border: '1px solid #eee', borderRadius: 1, p: 1, bgcolor: '#f9f9f9' }}>
-            <List dense>
+          <Box
+            ref={messagesContainerRef}
+            sx={{
+              flexGrow: 1,
+              overflowY: 'auto',
+              mb: 2,
+              borderRadius: 3,
+              p: 1.5,
+              bgcolor: (theme) => alpha(theme.palette.text.primary, 0.03),
+              border: '1px solid',
+              borderColor: 'divider',
+            }}
+          >
+            <List dense disablePadding>
+              {messages.length === 0 && (
+                <Typography variant="body2" color="text.secondary" sx={{ px: 1, py: 2, textAlign: 'center' }}>
+                  Ask anything about what you are viewing.
+                </Typography>
+              )}
               {messages.map((msg, index) => (
-                <ListItem key={index} sx={{ justifyContent: msg.sender === 'user' ? 'flex-end' : 'flex-start' }}>
+                <ListItem key={index} disableGutters sx={{ justifyContent: msg.sender === 'user' ? 'flex-end' : 'flex-start', py: 0.5 }}>
                   <Box
                     sx={{
-                      bgcolor: msg.sender === 'user' ? 'primary.main' : 'grey.300',
-                      color: msg.sender === 'user' ? 'white' : 'black',
-                      borderRadius: 2,
-                      p: 1,
-                      maxWidth: '80%',
+                      bgcolor: msg.sender === 'user' ? 'primary.main' : 'background.paper',
+                      color: msg.sender === 'user' ? 'primary.contrastText' : 'text.primary',
+                      border: msg.sender === 'user' ? 'none' : '1px solid',
+                      borderColor: 'divider',
+                      borderRadius: 2.5,
+                      px: 1.5,
+                      py: 1,
+                      maxWidth: '85%',
+                      fontSize: '0.9375rem',
+                      lineHeight: 1.45,
+                      boxShadow: msg.sender === 'user' ? '0 2px 8px rgba(0,113,227,0.25)' : 'none',
                     }}
                   >
-                    <ListItemText primary={msg.text} />
+                    {msg.text}
                   </Box>
                 </ListItem>
               ))}
               <div ref={messagesEndRef} />
             </List>
           </Box>
-          <Box sx={{ display: 'flex', gap: 1 }}>
+          <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
             <TextField
               fullWidth
-              size="small"
-              variant="outlined"
-              placeholder="Ask a question..."
+              placeholder="Ask a question…"
               value={question}
               onChange={(e) => setQuestion(e.target.value)}
-              onKeyPress={(e) => e.key === 'Enter' && handleAsk()}
+              onKeyDown={(e) => e.key === 'Enter' && handleAsk()}
             />
-            <Button variant="contained" onClick={handleAsk} size="small">
+            <Button variant="contained" onClick={handleAsk}>
               Send
             </Button>
           </Box>

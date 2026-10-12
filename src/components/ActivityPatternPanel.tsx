@@ -1,16 +1,26 @@
 'use client';
 
-import React from 'react';
-import { Box, LinearProgress, Stack, Typography } from '@mui/material';
+import React, { useMemo } from 'react';
+import { Box, LinearProgress, Stack, Typography, useTheme } from '@mui/material';
 import type { DailyAccessPattern, TimeOfDayPattern } from '@/lib/canvas/activityPatterns';
 import { formatRangeLabel } from '@/lib/canvas/engagementRange';
+import { chartPanelSx } from '@/theme/appleTheme';
 
-const periodColor: Record<string, string> = {
-  Morning: '#5B8DEF',
-  Afternoon: '#E0A106',
-  Evening: '#E07A3D',
-  Night: '#6B7280',
-};
+function periodColors(isDark: boolean): Record<string, string> {
+  return isDark
+    ? {
+        Morning: '#0a84ff',
+        Afternoon: '#ffd60a',
+        Evening: '#ff9f0a',
+        Night: '#98989d',
+      }
+    : {
+        Morning: '#0071e3',
+        Afternoon: '#ff9500',
+        Evening: '#bf4800',
+        Night: '#86868b',
+      };
+}
 
 function DayList({ title, days }: { title: string; days: { date: string; views: number }[] }) {
   return (
@@ -36,17 +46,13 @@ export function ActivityPatternPanel({
   timeOfDay: TimeOfDayPattern | null;
   timeOfDayLoading?: boolean;
 }) {
+  const theme = useTheme();
+  const isDark = theme.palette.mode === 'dark';
+  const periodColor = useMemo(() => periodColors(isDark), [isDark]);
   const recentWeeks = daily.weekChanges.slice(-4);
 
   return (
-    <Box
-      sx={{
-        border: 1,
-        borderColor: 'divider',
-        borderRadius: 1,
-        p: 2,
-      }}
-    >
+    <Box sx={{ ...chartPanelSx }}>
       <Typography variant="h6" gutterBottom>
         Access patterns
       </Typography>
@@ -76,7 +82,9 @@ export function ActivityPatternPanel({
           <Stack direction="row" spacing={2} useFlexGap flexWrap="wrap">
             {timeOfDay.periods.map((period) => (
               <Box key={period.period} sx={{ flex: '1 1 140px', minWidth: 140 }}>
-                <Typography variant="caption">{period.period}</Typography>
+                <Typography variant="caption" color="text.secondary">
+                  {period.period}
+                </Typography>
                 <LinearProgress
                   variant="determinate"
                   value={Math.min(100, period.percentage)}
@@ -84,8 +92,9 @@ export function ActivityPatternPanel({
                     my: 0.5,
                     height: 8,
                     borderRadius: 4,
+                    bgcolor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)',
                     '& .MuiLinearProgress-bar': {
-                      backgroundColor: periodColor[period.period] ?? '#5B8DEF',
+                      backgroundColor: periodColor[period.period] ?? periodColor.Morning,
                     },
                   }}
                 />
@@ -133,7 +142,9 @@ function Stat({ label, value }: { label: string; value: string }) {
       <Typography variant="caption" color="text.secondary">
         {label}
       </Typography>
-      <Typography variant="subtitle1">{value}</Typography>
+      <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+        {value}
+      </Typography>
     </Box>
   );
 }

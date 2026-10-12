@@ -7,10 +7,21 @@ type DiscussionTopic = {
   discussion_subentry_count?: number;
   published?: boolean;
   posted_at?: string;
+  created_at?: string;
+  last_reply_at?: string | null;
   user_name?: string;
   is_announcement?: boolean;
   announcement?: boolean;
   type?: string;
+  group_category_id?: number | null;
+  group_topic_children?: { id: number; group_id: number }[];
+  root_topic_id?: number | null;
+};
+
+type CanvasGroup = {
+  id: number;
+  name?: string;
+  group_category_id?: number | null;
 };
 
 type DiscussionEntry = {
@@ -42,6 +53,12 @@ export type DiscussionListItem = {
   title: string;
   participants: number;
   summary: string;
+  isGroupDiscussion: boolean;
+};
+
+export type DiscussionGroupChoice = {
+  id: number;
+  name: string;
 };
 
 export type DiscussionPost = {
@@ -53,6 +70,8 @@ export type DiscussionPost = {
   createdAt: string | null;
   parentId: number | null;
   depth: number;
+  topicId?: number;
+  topicTitle?: string;
 };
 
 export type DiscussionTopicStats = {
@@ -68,6 +87,12 @@ export type DiscussionDetail = {
   posts: DiscussionPost[];
   stats: DiscussionTopicStats;
   graphData: DiscussionGraph;
+};
+
+export type DiscussionsBoard = {
+  courseDiscussions: DiscussionListItem[];
+  groups: DiscussionGroupChoice[];
+  hasGroups: boolean;
 };
 
 export type DiscussionGraph = {
@@ -203,6 +228,10 @@ function topicStats(posts: DiscussionPost[], openedAt: string | null): Discussio
   };
 }
 
+function isGroupDiscussionTopic(topic: DiscussionTopic): boolean {
+  return topic.group_category_id != null && topic.group_category_id > 0;
+}
+
 function isAnnouncementTopic(topic: DiscussionTopic): boolean {
   if (topic.is_announcement === true) return true;
   if (topic.announcement === true) return true;
@@ -274,6 +303,7 @@ export async function listCourseDiscussions(courseId: string): Promise<Discussio
     seen.add(t.id);
     if (t.published === false) continue;
     if (isAnnouncementTopic(t)) continue;
+    if (t.root_topic_id != null) continue;
     topics.push(t);
   }
 
@@ -284,7 +314,112 @@ export async function listCourseDiscussions(courseId: string): Promise<Discussio
       title: t.title ?? 'Untitled discussion',
       participants: t.discussion_subentry_count ?? 0,
       summary: t.message ? stripHtml(t.message).slice(0, 280) : 'No description.',
+      isGroupDiscussion: isGroupDiscussionTopic(t),
     }));
+}
+
+function sortGroups(groups: CanvasGroup[]): DiscussionGroupChoice[] {
+  return groups
+    .slice()
+    .sort((a, b) =>
+      (a.name ?? '').localeCompare(b.name ?? '', undefined, { numeric: true, sensitivity: 'base' }),
+    )
+    .map((group) => ({
+      id: group.id,
+      name: group.name?.trim() || `Group ${group.id}`,
+    }));
+}
+
+export async function listCourseGroups(courseId: string): Promise<DiscussionGroupChoice[]> {
+  const groups = await fetchAllPages<CanvasGroup>(`/courses/${courseId}/groups`, {
+    collaboration_state: 'all',
+  }).catch(() => [] as CanvasGroup[]);
+  return sortGroups(groups);
+}
+
+export async function getDiscussionsBoard(courseId: string): Promise<DiscussionsBoard> {
+  const [discussions, groups] = await Promise.all([
+    listCourseDiscussions(courseId),
+    listCourseGroups(courseId),
+  ]);
+  return {
+    courseDiscussions: discussions.filter((topic) => !topic.isGroupDiscussion),
+    groups,
+    hasGroups: groups.length > 0,
+  };
+}
+
+async function loadGroupDiscussionPosts(
+  groupId: number,
+  topicId: string,
+): Promise<DiscussionPost[]> {
+  try {
+    const full = await canvasRequest<DiscussionView>(
+      `/groups/${groupId}/discussion_topics/${topicId}/view`,
+    );
+    const participants = new Map<number, string>();
+    for (const person of full.participants ?? []) {
+      if (person.display_name) participants.set(person.id, person.display_name);
+    }
+    return flattenViewEntries(full.view ?? [], participants);
+  } catch {
+    const entries = await fetchAllPages<DiscussionEntry>(
+      `/groups/${groupId}/discussion_topics/${topicId}/entries`,
+      { per_page: '100' },
+    ).catch(() => [] as DiscussionEntry[]);
+    return flattenViewEntries(entries, new Map());
+  }
+}
+
+function topicRecency(topic: DiscussionTopic): number {
+  const iso = topic.last_reply_at || topic.posted_at || topic.created_at;
+  const time = iso ? Date.parse(iso) : 0;
+  return Number.isNaN(time) ? 0 : time;
+}
+
+export async function listGroupDiscussions(groupId: number): Promise<DiscussionListItem[]> {
+  const topics = await fetchAllPages<DiscussionTopic>(
+    `/groups/${groupId}/discussion_topics`,
+  ).catch(() => [] as DiscussionTopic[]);
+
+  return topics
+    .filter(
+      (topic) =>
+        topic.published !== false &&
+        !isAnnouncementTopic(topic) &&
+        topic.title &&
+        (topic.discussion_subentry_count ?? 0) > 0,
+    )
+    .sort((a, b) => topicRecency(b) - topicRecency(a))
+    .map((topic) => ({
+      id: topic.id,
+      title: topic.title ?? 'Untitled discussion',
+      participants: topic.discussion_subentry_count ?? 0,
+      summary: topic.message ? stripHtml(topic.message).slice(0, 280) : 'No description.',
+      isGroupDiscussion: true,
+    }));
+}
+
+export async function getGroupTopicDetail(
+  groupId: number,
+  topicId: string,
+): Promise<DiscussionDetail> {
+  const topicMeta = await canvasRequest<DiscussionTopic>(
+    `/groups/${groupId}/discussion_topics/${topicId}`,
+  ).catch(() => ({ title: 'Discussion' }) as DiscussionTopic);
+
+  const title = topicMeta.title ?? 'Discussion';
+  const prompt = topicMeta.message ? stripHtml(topicMeta.message) : '';
+  const summary = prompt || `${title} has no topic prompt.`;
+  const posts = await loadGroupDiscussionPosts(groupId, topicId);
+  const stats = topicStats(posts, topicMeta.posted_at ?? null);
+
+  return {
+    summary,
+    posts,
+    stats,
+    graphData: buildGraphFromPosts(posts),
+  };
 }
 
 async function loadDiscussionPosts(
@@ -334,10 +469,10 @@ export async function getDiscussionDetail(
     };
   }
 
-  const posts = await loadDiscussionPosts(courseId, topicId);
   const title = topicMeta.title ?? 'Discussion';
   const prompt = topicMeta.message ? stripHtml(topicMeta.message) : '';
   const summary = prompt || `${title} has no topic prompt.`;
+  const posts = await loadDiscussionPosts(courseId, topicId);
   const stats = topicStats(posts, topicMeta.posted_at ?? null);
 
   return {

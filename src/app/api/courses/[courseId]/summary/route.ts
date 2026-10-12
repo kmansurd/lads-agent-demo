@@ -4,6 +4,7 @@ import { getCourseGrades } from '@/lib/canvas/grades';
 import { listCourseDiscussions } from '@/lib/canvas/discussions';
 import { getCourseStudents } from '@/lib/canvas/students';
 import { handleRouteError } from '@/lib/api/errors';
+import { withCanvasRoute } from '@/lib/api/withCanvasRoute';
 
 export const dynamic = 'force-dynamic';
 
@@ -11,6 +12,7 @@ type Params = { params: Promise<{ courseId: string }> };
 type TabKey = 'grades' | 'engagement' | 'students' | 'discussions';
 
 export async function GET(request: Request, { params }: Params) {
+  return withCanvasRoute(request, async () => {
   try {
     const { courseId } = await params;
     const tab = (new URL(request.url).searchParams.get('tab') ?? 'grades') as TabKey;
@@ -71,4 +73,5 @@ export async function GET(request: Request, { params }: Params) {
   } catch (error) {
     return handleRouteError(error);
   }
+  });
 }

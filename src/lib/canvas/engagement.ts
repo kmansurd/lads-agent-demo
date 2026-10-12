@@ -1,4 +1,5 @@
 import { canvasRequest } from './client';
+import type { CanvasCourseTimeline } from './courseTimeline';
 import { listCourseContentCatalog, type CourseContentRow } from './courseContentCatalog';
 import {
   aggregateDailyToWeekly,
@@ -120,6 +121,7 @@ export async function getCourseEngagement(
   options: GetCourseEngagementOptions = {},
 ): Promise<CourseEngagementPayload> {
   const dataSources = [
+    'GET /courses/:id?include[]=term (engagement date window)',
     'GET /courses/:id/analytics/activity',
     'GET /courses/:id/analytics/users/:id/activity (hourly page views + participation URLs; UBC-style)',
     'GET /users/:user_id/page_views (when Statistics permission enabled)',
@@ -127,7 +129,14 @@ export async function getCourseEngagement(
     'GET /courses/:id/assignments, /pages, /files, /quizzes, /discussion_topics, /modules',
   ];
 
-  const { semester, range, meta } = resolveEngagementRange(options.start, options.end);
+  const courseDetail = await canvasRequest<CanvasCourseTimeline>(`/courses/${courseId}`, {
+    'include[]': ['term'],
+  });
+
+  const { semester, range, meta } = resolveEngagementRange(options.start, options.end, {
+    course: courseDetail,
+    termLabel: courseDetail.term?.name,
+  });
   const dataThrough = semesterDataCutoff(semester);
 
   let dailyActivity: DailyActivityPoint[] = [];

@@ -3,12 +3,44 @@ import * as React from 'react';
 import createCache from '@emotion/cache';
 import { useServerInsertedHTML } from 'next/navigation';
 import { CacheProvider as EmotionCacheProvider } from '@emotion/react';
-import { ThemeProvider, createTheme } from '@mui/material/styles';
+import { ThemeProvider } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
+import { createAppleTheme } from '@/theme/appleTheme';
+import { applyChartJsDefaults } from '@/lib/chartDefaults';
+import { ColorModeProvider, useColorMode } from '@/context/ColorModeContext';
 
-const theme = createTheme({
-  // your theme configuration
-});
+function ThemeShell({ children }: { children: React.ReactNode }) {
+  const { resolvedMode } = useColorMode();
+  const theme = React.useMemo(() => createAppleTheme(resolvedMode), [resolvedMode]);
+
+  React.useEffect(() => {
+    applyChartJsDefaults(resolvedMode);
+  }, [resolvedMode]);
+
+  // Emotion/CssBaseline can leave the previous mode's body colors in place after a flip.
+  // Force the active palette on html/body (with !important) so inherited text stays readable.
+  React.useEffect(() => {
+    const { background, text } = theme.palette;
+    const root = document.documentElement;
+    const body = document.body;
+    root.style.colorScheme = resolvedMode;
+    root.style.setProperty('background-color', background.default, 'important');
+    body.style.setProperty('background-color', background.default, 'important');
+    body.style.setProperty('color', text.primary, 'important');
+    return () => {
+      root.style.removeProperty('background-color');
+      body.style.removeProperty('background-color');
+      body.style.removeProperty('color');
+    };
+  }, [theme, resolvedMode]);
+
+  return (
+    <ThemeProvider theme={theme}>
+      <CssBaseline key={resolvedMode} enableColorScheme />
+      {children}
+    </ThemeProvider>
+  );
+}
 
 export default function ThemeRegistry({ children }: { children: React.ReactNode }) {
   const [{ cache, flush }] = React.useState(() => {
@@ -53,10 +85,9 @@ export default function ThemeRegistry({ children }: { children: React.ReactNode 
 
   return (
     <EmotionCacheProvider value={cache}>
-      <ThemeProvider theme={theme}>
-        <CssBaseline />
-        {children}
-      </ThemeProvider>
+      <ColorModeProvider>
+        <ThemeShell>{children}</ThemeShell>
+      </ColorModeProvider>
     </EmotionCacheProvider>
   );
 }

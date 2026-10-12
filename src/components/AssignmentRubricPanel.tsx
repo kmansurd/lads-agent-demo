@@ -2,7 +2,6 @@
 
 import React from 'react';
 import {
-  Box,
   CircularProgress,
   Paper,
   Table,
@@ -14,6 +13,7 @@ import {
   Typography,
 } from '@mui/material';
 import type { AssignmentRubricDetail } from '@/lib/canvas/assignmentRubric';
+import type { GradebookRating } from '@/lib/canvas/grades';
 
 function points(value: number | null, possible: number | null): string {
   if (value == null) return '—';
@@ -23,12 +23,24 @@ function points(value: number | null, possible: number | null): string {
   return `${shown} / ${possibleShown}`;
 }
 
+function formatOrderedRatingCounts(
+  ratingOrder: GradebookRating[],
+  countsByKey: Record<string, number>,
+): string {
+  if (ratingOrder.length === 0) return '—';
+  return ratingOrder
+    .map((rating) => `${rating.label} (${countsByKey[rating.key] ?? 0})`)
+    .join('; ');
+}
+
 export function AssignmentRubricPanel({
   detail,
   loading,
+  ratingOrder,
 }: {
   detail: AssignmentRubricDetail | null;
   loading: boolean;
+  ratingOrder: GradebookRating[];
 }) {
   if (loading && !detail) {
     return (
@@ -45,71 +57,34 @@ export function AssignmentRubricPanel({
     return (
       <Paper variant="outlined" sx={{ p: 2, mt: 2 }}>
         <Typography variant="body2" color="text.secondary">
-          This assignment has no rubric. The chart uses the posted score.
+          This assignment has no rubric.
         </Typography>
       </Paper>
     );
   }
 
-  const bothScored = detail.postedCount > 0 && detail.rubricCount > 0;
-
   return (
     <Paper variant="outlined" sx={{ p: 2, mt: 2 }}>
       <Typography variant="h6">Rubric</Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, maxWidth: 760 }}>
-        Posted score is the grade on the submission. Rubric total is the sum of the criterion marks. They can differ
-        when the final grade is adjusted after the rubric is filled in.
-        {detail.source === 'quiz' ? ' Criterion marks were read from the quiz rubric.' : ''}
-      </Typography>
-
-      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3, mt: 2 }}>
-        <Box>
-          <Typography variant="overline" color="text.secondary">
-            Posted score
-          </Typography>
-          <Typography variant="h6">{points(detail.postedAverage, detail.pointsPossible)}</Typography>
-          <Typography variant="caption" color="text.secondary">
-            Average across {detail.postedCount} {detail.postedCount === 1 ? 'student' : 'students'}
-          </Typography>
-        </Box>
-        <Box>
-          <Typography variant="overline" color="text.secondary">
-            Rubric total
-          </Typography>
-          <Typography variant="h6">{points(detail.rubricAverage, detail.rubricPointsPossible)}</Typography>
-          <Typography variant="caption" color="text.secondary">
-            Average across {detail.rubricCount} {detail.rubricCount === 1 ? 'student' : 'students'}
-          </Typography>
-        </Box>
-      </Box>
-      {bothScored ? (
-        <Typography variant="body2" sx={{ mt: 1.5 }}>
-          {detail.scoresDiffer > 0
-            ? `${detail.scoresDiffer} ${detail.scoresDiffer === 1 ? 'student has' : 'students have'} a posted percentage that differs from the rubric percentage.`
-            : 'Posted percentages match the rubric percentages.'}
-        </Typography>
-      ) : null}
-      {detail.markers.length > 0 ? (
+      {ratingOrder.length === 0 ? (
         <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-          Marked by{' '}
-          {detail.markers
-            .map((marker) => `${marker.name} (${marker.role}, ${marker.count})`)
-            .join(' · ')}
+          Match rubric ratings above to list every rating here, including zeros.
         </Typography>
       ) : null}
 
-      {detail.criteria.length > 0 && detail.rubricCount === 0 ? (
-        <Typography variant="body2" sx={{ mt: 2 }}>
-          The rubric is attached, and no criterion marks have been posted yet.
+      {detail.criteria.length === 0 ? (
+        <Typography variant="body2" sx={{ mt: 1.5 }}>
+          No rubric criteria found for this assignment.
         </Typography>
       ) : (
-        <TableContainer sx={{ mt: 2 }}>
+        <TableContainer sx={{ mt: 1.5 }}>
           <Table size="small">
             <TableHead>
               <TableRow>
                 <TableCell>Criterion</TableCell>
                 <TableCell align="right">Average</TableCell>
                 <TableCell>Ratings</TableCell>
+                <TableCell align="right">Total</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -122,17 +97,21 @@ export function AssignmentRubricPanel({
                   <TableCell align="right">
                     {points(criterion.averagePoints, criterion.pointsPossible)}
                   </TableCell>
-                  <TableCell>
-                    {criterion.ratings.length > 0
-                      ? criterion.ratings.map((rating) => `${rating.label} ${rating.count}`).join(' · ')
-                      : '—'}
+                  <TableCell sx={{ maxWidth: 520, whiteSpace: 'normal', lineHeight: 1.5 }}>
+                    {formatOrderedRatingCounts(ratingOrder, criterion.ratingCountsByKey)}
                   </TableCell>
+                  <TableCell align="right">{criterion.totalRatingCount}</TableCell>
                 </TableRow>
               ))}
             </TableBody>
           </Table>
         </TableContainer>
       )}
+      {detail.criteria.length > 0 && detail.rubricCount === 0 ? (
+        <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+          No criterion marks have been posted yet. Counts below are zero.
+        </Typography>
+      ) : null}
     </Paper>
   );
 }

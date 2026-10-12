@@ -112,6 +112,35 @@ export function mappingRatings(criteria: GradebookCriterion[]): GradebookRating[
   );
 }
 
+export function orderGradebookRatings(
+  ratings: GradebookRating[],
+  orderKeys: string[],
+): GradebookRating[] {
+  if (orderKeys.length === 0) return ratings;
+  const byKey = new Map(ratings.map((rating) => [rating.key, rating]));
+  const ordered: GradebookRating[] = [];
+  for (const key of orderKeys) {
+    const rating = byKey.get(key);
+    if (!rating) continue;
+    ordered.push(rating);
+    byKey.delete(key);
+  }
+  for (const rating of ratings) {
+    if (byKey.has(rating.key)) ordered.push(rating);
+  }
+  return ordered;
+}
+
+export function reorderRatingKeys(keys: string[], activeKey: string, targetKey: string): string[] {
+  const from = keys.indexOf(activeKey);
+  const to = keys.indexOf(targetKey);
+  if (from < 0 || to < 0 || from === to) return keys;
+  const next = [...keys];
+  next.splice(from, 1);
+  next.splice(to, 0, activeKey);
+  return next;
+}
+
 function scoredWeight(row: AssessmentGradeRow, criterionKey: string): number | null {
   const criterion = row.criteria.find((item) => item.key === criterionKey);
   if (!criterion?.scored) return null;

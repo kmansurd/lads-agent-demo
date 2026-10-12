@@ -15,12 +15,16 @@ import {
 import { DataGrid, GridColDef, type GridRowSelectionModel } from '@mui/x-data-grid';
 import { Box, Button, Slider, Stack, Typography } from '@mui/material';
 import { useCourse } from '@/context/CourseContext';
+import { fetchWithCanvasAuth } from '@/lib/client/canvasTokenStorage';
 import { useCourseData } from '@/hooks/useCourseData';
 import { TabLoader } from '@/components/CourseDataState';
 import { TabDataSourceFooter } from '@/components/TabDataSourceFooter';
 import { useCourseCapabilities } from '@/hooks/useCourseCapabilities';
 import type { CourseStudentsPayload, StudentRow } from '@/lib/canvas/students';
 import type { EngagementRangeMeta } from '@/lib/canvas/engagementRange';
+import { lineChartOptions, studentLineColor } from '@/lib/chartDefaults';
+import { useColorMode } from '@/context/ColorModeContext';
+import { chartPanelSx, dataGridShellSx } from '@/theme/appleTheme';
 import {
   dateFromDayIndex,
   dayIndexFromSemesterStart,
@@ -119,11 +123,6 @@ const columns: GridColDef[] = [
 
 type StudentsResponse = CourseStudentsPayload & { dataSources: string[] };
 
-function studentLineColor(studentId: number): string {
-  const hue = Math.round((studentId * 137.508) % 360);
-  return `hsl(${hue} 68% 42%)`;
-}
-
 function idsFromSelection(model: GridRowSelectionModel, allIds: number[]): number[] {
   if (Array.isArray(model)) return model.map((id) => Number(id));
   const picked = [...model.ids].map((id) => Number(id));
@@ -187,6 +186,7 @@ function downloadCsv(students: StudentRow[], range: EngagementRangeMeta) {
 }
 
 const Students = () => {
+  const { resolvedMode } = useColorMode();
   const { courseId } = useCourse();
   const { data, loading, error, fetchedAt } = useCourseData<StudentsResponse>('students');
   const { capabilities } = useCourseCapabilities();
@@ -200,6 +200,14 @@ const Students = () => {
   const [endIdx, setEndIdx] = useState(0);
   const [rangeLoading, setRangeLoading] = useState(false);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
+
+  useEffect(() => {
+    setSemesterStartIso('');
+    setStartIdx(0);
+    setEndIdx(0);
+    setMaxDayIndex(0);
+    setSelectedIds([]);
+  }, [courseId]);
 
   useEffect(() => {
     if (!data) return;
@@ -228,7 +236,7 @@ const Students = () => {
     const { start, end } = indicesToIso(semesterStartIso, startIdx, endIdx);
     setRangeLoading(true);
     try {
-      const res = await fetch(`/api/courses/${courseId}/students?start=${start}&end=${end}`);
+      const res = await fetchWithCanvasAuth(`/api/courses/${courseId}/students?start=${start}&end=${end}`);
       const body = (await res.json()) as StudentsResponse;
       if (res.ok) {
         setStudents(body.students);
@@ -271,20 +279,20 @@ const Students = () => {
           ? labels
           : Array.from({ length }, (_, index) => `Week ${index + 1}`),
       datasets: plotted.map((row) => {
-        const color = studentLineColor(row.id);
+        const color = studentLineColor(row.id, resolvedMode);
         return {
           label: row.name,
           data: pad(row.weeklyViews),
           borderColor: color,
           backgroundColor: color,
-          borderWidth: 1.5,
+          borderWidth: resolvedMode === 'dark' ? 2.25 : 1.5,
           pointRadius: 0,
           pointHoverRadius: 3,
           tension: 0.15,
         };
       }),
     };
-  }, [students, selectedIds, selectedStartIso, selectedEndIso]);
+  }, [students, selectedIds, selectedStartIso, selectedEndIso, resolvedMode]);
 
   if (loading || error) {
     return <TabLoader loading={loading} error={error} />;
@@ -363,16 +371,14 @@ const Students = () => {
             <Typography variant="caption" color="text.secondary">
               {compareChart.datasets.length.toLocaleString()} selected. Hover a line to see the name.
             </Typography>
-            <Box sx={{ height: 360 }}>
+            <Box sx={{ ...chartPanelSx, height: 360 }}>
               <Line
+                key={resolvedMode}
                 data={compareChart}
-                options={{
-                  responsive: true,
-                  maintainAspectRatio: false,
-                  interaction: { mode: 'nearest', intersect: false },
+                options={lineChartOptions('Weekly page views', resolvedMode, {
                   plugins: {
-                    legend: { display: false },
                     title: { display: false },
+                    legend: { display: false },
                     tooltip: {
                       callbacks: {
                         label: (item) =>
@@ -380,7 +386,7 @@ const Students = () => {
                       },
                     },
                   },
-                }}
+                })}
               />
             </Box>
             <Box
@@ -419,6 +425,7 @@ const Students = () => {
           </Typography>
         )}
       </Box>
+      <Box sx={{ ...dataGridShellSx, mt: 2 }}>
       <DataGrid
         rows={students}
         columns={columns}
@@ -432,6 +439,7 @@ const Students = () => {
           sorting: { sortModel: [{ field: 'name', sort: 'asc' }] },
         }}
       />
+      </Box>
       <TabDataSourceFooter
         sources={data.dataSources}
         fetchedAt={fetchedAt}

@@ -9,6 +9,8 @@ import React, {
   useState,
 } from 'react';
 import type { CourseCapabilities } from '@/lib/canvas/capabilities';
+import { useCanvasAuth } from '@/context/CanvasAuthContext';
+import { fetchWithCanvasAuth } from '@/lib/client/canvasTokenStorage';
 
 export type CourseOption = {
   id: number;
@@ -32,6 +34,7 @@ type CourseContextValue = {
 const CourseContext = createContext<CourseContextValue | null>(null);
 
 export function CourseProvider({ children }: { children: React.ReactNode }) {
+  const { tokenRevision, authReady } = useCanvasAuth();
   const [courses, setCourses] = useState<CourseOption[]>([]);
   const [courseId, setCourseIdState] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -43,7 +46,7 @@ export function CourseProvider({ children }: { children: React.ReactNode }) {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/courses');
+      const res = await fetchWithCanvasAuth('/api/courses');
       const body = await res.json();
       if (!res.ok) {
         throw new Error(body.error ?? 'Failed to load courses');
@@ -62,11 +65,12 @@ export function CourseProvider({ children }: { children: React.ReactNode }) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [tokenRevision]);
 
   useEffect(() => {
+    if (!authReady) return;
     refreshCourses();
-  }, [refreshCourses]);
+  }, [authReady, refreshCourses]);
 
   const refreshCapabilities = useCallback(async () => {
     if (!courseId) {
@@ -75,7 +79,7 @@ export function CourseProvider({ children }: { children: React.ReactNode }) {
     }
     setCapabilitiesLoading(true);
     try {
-      const res = await fetch(`/api/courses/${courseId}/capabilities`);
+      const res = await fetchWithCanvasAuth(`/api/courses/${courseId}/capabilities`);
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? 'Failed to load capabilities');
       setCapabilities(body as CourseCapabilities);
@@ -84,7 +88,7 @@ export function CourseProvider({ children }: { children: React.ReactNode }) {
     } finally {
       setCapabilitiesLoading(false);
     }
-  }, [courseId]);
+  }, [courseId, tokenRevision]);
 
   useEffect(() => {
     refreshCapabilities();

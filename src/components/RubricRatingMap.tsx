@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
+import DragIndicatorIcon from '@mui/icons-material/DragIndicator';
 import {
   Box,
   Button,
@@ -33,6 +34,7 @@ export function RubricRatingMap({
   matches,
   onScale,
   onMatch,
+  onMoveRating,
   onRemove,
   onAdd,
 }: {
@@ -41,10 +43,13 @@ export function RubricRatingMap({
   matches: RatingMatchMap;
   onScale: (scale: GradeScale) => void;
   onMatch: (ratingKey: string, patch: Partial<RatingMatchMap[string]>) => void;
+  onMoveRating: (activeKey: string, targetKey: string) => void;
   onRemove: (ratingKey: string) => void;
   onAdd: (label: string) => void;
 }) {
   const [draft, setDraft] = useState('');
+  const [dragKey, setDragKey] = useState<string | null>(null);
+  const [dropKey, setDropKey] = useState<string | null>(null);
 
   const addDraft = () => {
     const label = draft.replace(/\s+/g, ' ').trim();
@@ -53,14 +58,19 @@ export function RubricRatingMap({
     setDraft('');
   };
 
+  const finishDrag = () => {
+    setDragKey(null);
+    setDropKey(null);
+  };
+
   return (
     <Paper variant="outlined" sx={{ p: 2, mb: 2, maxWidth: '100%', overflowX: 'auto' }}>
       <Typography variant="h6">Match rubric ratings</Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, maxWidth: 760 }}>
-        Ratings are the same on every criterion. Match each one to a letter grade or a percentage
-        range, or remove it from this list. You can also add a rating. Only ratings on published
-        assignments are listed at first. For a percentage, set the start and end yourself, from 0 to
-        100.
+        Ratings are the same on every criterion. Drag the handle to reorder. Match each one to a letter
+        grade or a percentage range, or remove it from this list. You can also add a rating. Only ratings
+        on published assignments are listed at first. For a percentage, set the start and end yourself,
+        from 0 to 100.
       </Typography>
       <ToggleButtonGroup
         exclusive
@@ -80,9 +90,10 @@ export function RubricRatingMap({
           No ratings in this list. Add one below, or published assignments in this course have none yet.
         </Typography>
       ) : (
-        <Table size="small" sx={{ mt: 2, maxWidth: 640 }}>
+        <Table size="small" sx={{ mt: 2, maxWidth: 680 }}>
           <TableHead>
             <TableRow>
+              <TableCell sx={{ width: 36, px: 0.5 }} />
               <TableCell>Rating</TableCell>
               <TableCell>{scale === 'letter' ? 'Letter grade' : 'Percentage range'}</TableCell>
               <TableCell />
@@ -95,8 +106,50 @@ export function RubricRatingMap({
                 scale === 'percent' &&
                 (match.start.trim() !== '' || match.end.trim() !== '') &&
                 parseRange(match) == null;
+              const isDropTarget = dropKey === rating.key && dragKey != null && dragKey !== rating.key;
               return (
-                <TableRow key={rating.key}>
+                <TableRow
+                  key={rating.key}
+                  hover
+                  onDragOver={(event) => {
+                    if (!dragKey || dragKey === rating.key) return;
+                    event.preventDefault();
+                    setDropKey(rating.key);
+                  }}
+                  onDragLeave={() => {
+                    if (dropKey === rating.key) setDropKey(null);
+                  }}
+                  onDrop={(event) => {
+                    event.preventDefault();
+                    if (dragKey && dragKey !== rating.key) onMoveRating(dragKey, rating.key);
+                    finishDrag();
+                  }}
+                  sx={{
+                    bgcolor: isDropTarget ? 'action.hover' : undefined,
+                  }}
+                >
+                  <TableCell sx={{ width: 36, px: 0.5, verticalAlign: 'middle' }}>
+                    <Box
+                      component="span"
+                      draggable
+                      onDragStart={(event) => {
+                        setDragKey(rating.key);
+                        event.dataTransfer.effectAllowed = 'move';
+                        event.dataTransfer.setData('text/plain', rating.key);
+                      }}
+                      onDragEnd={finishDrag}
+                      aria-label={`Drag to reorder ${rating.label}`}
+                      sx={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        cursor: 'grab',
+                        color: 'text.secondary',
+                        touchAction: 'none',
+                      }}
+                    >
+                      <DragIndicatorIcon fontSize="small" />
+                    </Box>
+                  </TableCell>
                   <TableCell>{rating.label}</TableCell>
                   <TableCell>
                     {scale === 'letter' ? (
@@ -147,7 +200,12 @@ export function RubricRatingMap({
                     )}
                   </TableCell>
                   <TableCell align="right">
-                    <Button size="small" color="inherit" onClick={() => onRemove(rating.key)} aria-label={`Remove ${rating.label}`}>
+                    <Button
+                      size="small"
+                      color="inherit"
+                      onClick={() => onRemove(rating.key)}
+                      aria-label={`Remove ${rating.label}`}
+                    >
                       Remove
                     </Button>
                   </TableCell>
@@ -157,7 +215,7 @@ export function RubricRatingMap({
           </TableBody>
         </Table>
       )}
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 2, maxWidth: 640 }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 2, maxWidth: 680 }}>
         <TextField
           size="small"
           label="New rating"

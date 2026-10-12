@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useCourse } from '@/context/CourseContext';
+import { useCanvasAuth } from '@/context/CanvasAuthContext';
+import { fetchWithCanvasAuth } from '@/lib/client/canvasTokenStorage';
 
 export type CourseDataQuery = Record<string, string | undefined>;
 
@@ -17,6 +19,7 @@ function buildPath(base: string, query?: CourseDataQuery): string {
 
 export function useCourseData<T>(path: string | null, query?: CourseDataQuery) {
   const { courseId } = useCourse();
+  const { tokenRevision } = useCanvasAuth();
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -34,7 +37,7 @@ export function useCourseData<T>(path: string | null, query?: CourseDataQuery) {
     setError(null);
     try {
       const urlPath = buildPath(path, query);
-      const res = await fetch(`/api/courses/${courseId}/${urlPath}`);
+      const res = await fetchWithCanvasAuth(`/api/courses/${courseId}/${urlPath}`);
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? 'Request failed');
       setData(body as T);
@@ -46,7 +49,7 @@ export function useCourseData<T>(path: string | null, query?: CourseDataQuery) {
     } finally {
       setLoading(false);
     }
-  }, [courseId, path, queryKey]);
+  }, [courseId, path, queryKey, tokenRevision]);
 
   useEffect(() => {
     load();

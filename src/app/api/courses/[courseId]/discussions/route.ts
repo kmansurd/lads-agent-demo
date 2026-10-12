@@ -1,23 +1,30 @@
 import { NextResponse } from 'next/server';
-import { listCourseDiscussions } from '@/lib/canvas/discussions';
+import { getDiscussionsBoard } from '@/lib/canvas/discussions';
 import { handleRouteError } from '@/lib/api/errors';
+import { withCanvasRoute } from '@/lib/api/withCanvasRoute';
 
 export const dynamic = 'force-dynamic';
 
 type Params = { params: Promise<{ courseId: string }> };
 
-export async function GET(_request: Request, { params }: Params) {
-  try {
-    const { courseId } = await params;
-    const discussions = await listCourseDiscussions(courseId);
-    return NextResponse.json({
-      discussions,
-      dataSources: [
-        'GET /courses/:id/discussion_topics',
-        'GET /courses/:id/discussion_topics/:topic_id/view (full posts and nested replies)',
-      ],
-    });
-  } catch (error) {
-    return handleRouteError(error);
-  }
+export async function GET(request: Request, { params }: Params) {
+  return withCanvasRoute(request, async () => {
+    try {
+      const { courseId } = await params;
+      const board = await getDiscussionsBoard(courseId);
+      return NextResponse.json({
+        discussions: board.courseDiscussions,
+        courseDiscussions: board.courseDiscussions,
+        groups: board.groups,
+        hasGroups: board.hasGroups,
+        dataSources: [
+          'GET /courses/:id/discussion_topics (course-wide threads)',
+          'GET /courses/:id/groups',
+          'GET /groups/:group_id/discussion_topics (group threads)',
+        ],
+      });
+    } catch (error) {
+      return handleRouteError(error);
+    }
+  });
 }

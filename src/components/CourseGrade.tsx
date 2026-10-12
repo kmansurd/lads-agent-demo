@@ -15,6 +15,7 @@ import {
   Grid,
 } from '@mui/material';
 import { useCourseData } from '@/hooks/useCourseData';
+import { fetchWithCanvasAuth } from '@/lib/client/canvasTokenStorage';
 import { useCourse } from '@/context/CourseContext';
 import { TabLoader } from '@/components/CourseDataState';
 import { TabDataSourceFooter } from '@/components/TabDataSourceFooter';
@@ -23,9 +24,19 @@ import { AssignmentRubricPanel } from '@/components/AssignmentRubricPanel';
 import { AssessmentGradeTable } from '@/components/AssessmentGradeTable';
 import { RubricRatingMap } from '@/components/RubricRatingMap';
 import type { CourseGradesPayload, GradebookRating } from '@/lib/canvas/grades';
+import { getChartSeries, barChartOptions } from '@/lib/chartDefaults';
+import { useColorMode } from '@/context/ColorModeContext';
+import { chartPanelSx } from '@/theme/appleTheme';
 import type { AssignmentRubricDetail } from '@/lib/canvas/assignmentRubric';
 import type { LetterBucket } from '@/lib/canvas/letterScale';
 import { assessmentsForGradebook } from '@/lib/canvas/assessmentDisplay';
+import {
+  applyWeightOverrides,
+  commitWeightDraft,
+  manualWeightTotalValid,
+  weightOverridesDirty,
+  type AssessmentWeightOverrides,
+} from '@/lib/canvas/assessmentWeights';
 import {
   LETTERS,
   assignmentUsesMatch,
@@ -35,6 +46,8 @@ import {
   emptyMatch,
   letterColumnCounts,
   mappingRatings,
+  orderGradebookRatings,
+  reorderRatingKeys,
   overallLetterCounts,
   overallPercentCounts,
   percentColumnCounts,
@@ -47,12 +60,30 @@ ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend)
 
 const OVERALL_CHART_VALUE = 'overall';
 const MATCH_STORAGE_PREFIX = 'lads-gradebook-rating-map:';
+const WEIGHT_STORAGE_PREFIX = 'lads-gradebook-assessment-weights:';
+
+function readStoredWeights(courseId: string): AssessmentWeightOverrides {
+  try {
+    const raw = localStorage.getItem(WEIGHT_STORAGE_PREFIX + courseId);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object') return {};
+    const overrides: AssessmentWeightOverrides = {};
+    for (const [key, value] of Object.entries(parsed)) {
+      if (typeof value === 'string') overrides[key] = value;
+    }
+    return overrides;
+  } catch {
+    return {};
+  }
+}
 
 function readStoredMatch(courseId: string): {
   scale: GradeScale;
   matches: RatingMatchMap;
   hiddenKeys: string[];
   addedRatings: GradebookRating[];
+  ratingOrderKeys: string[];
 } | null {
   try {
     const raw = localStorage.getItem(MATCH_STORAGE_PREFIX + courseId);
@@ -62,6 +93,7 @@ function readStoredMatch(courseId: string): {
       matches?: RatingMatchMap;
       hiddenKeys?: unknown;
       addedRatings?: unknown;
+      ratingOrder?: unknown;
     };
     const scale: GradeScale = parsed.scale === 'percent' ? 'percent' : 'letter';
     const matches: RatingMatchMap = {};
@@ -86,8 +118,11 @@ function readStoredMatch(courseId: string): {
           return [{ key, label, points: null }];
         })
       : [];
+    const ratingOrderKeys = Array.isArray(parsed.ratingOrder)
+      ? parsed.ratingOrder.filter((key): key is string => typeof key === 'string' && key.length > 0)
+      : [];
     for (const key of hiddenKeys) delete matches[key];
-    return { scale, matches, hiddenKeys, addedRatings };
+    return { scale, matches, hiddenKeys, addedRatings, ratingOrderKeys };
   } catch {
     return null;
   }
@@ -97,6 +132,8 @@ const CourseGrade = () => {
   const { courseId } = useCourse();
   const { data, loading, error, fetchedAt } = useCourseData<CourseGradesPayload>('grades');
   const { capabilities } = useCourseCapabilities();
+  const { resolvedMode } = useColorMode();
+  const chartSeries = getChartSeries(resolvedMode);
   const [chartSelection, setChartSelection] = useState<string>(OVERALL_CHART_VALUE);
   const [rubricDetail, setRubricDetail] = useState<AssignmentRubricDetail | null>(null);
   const [rubricLoading, setRubricLoading] = useState(false);
@@ -104,7 +141,15 @@ const CourseGrade = () => {
   const [matches, setMatches] = useState<RatingMatchMap>({});
   const [hiddenKeys, setHiddenKeys] = useState<string[]>([]);
   const [addedRatings, setAddedRatings] = useState<GradebookRating[]>([]);
+  const [ratingOrderKeys, setRatingOrderKeys] = useState<string[]>([]);
   const [matchReady, setMatchReady] = useState(false);
+  const [weightOverrides, setWeightOverrides] = useState<AssessmentWeightOverrides>({});
+  const [weightDraft, setWeightDraft] = useState<AssessmentWeightOverrides>({});
+  const [weightsReady, setWeightsReady] = useState(false);
+  const weightsDirty = useMemo(
+    () => weightOverridesDirty(weightDraft, weightOverrides),
+    [weightDraft, weightOverrides],
+  );
 
   const assessments = useMemo(
     () =>
@@ -115,14 +160,32 @@ const CourseGrade = () => {
       })),
     [data?.assessments],
   );
+  const weightedAssessments = useMemo(
+    () => applyWeightOverrides(assessments, weightOverrides),
+    [assessments, weightOverrides],
+  );
   const criteria = useMemo(() => courseCriteria(assessments), [assessments]);
-  const ratings = useMemo(() => {
+  const baseRatings = useMemo(() => {
     const hidden = new Set(hiddenKeys);
     const source = mappingRatings(criteria).filter((rating) => !hidden.has(rating.key));
     const known = new Set(source.map((rating) => rating.key));
     const extra = addedRatings.filter((rating) => !hidden.has(rating.key) && !known.has(rating.key));
     return [...source, ...extra];
   }, [addedRatings, criteria, hiddenKeys]);
+  const ratings = useMemo(
+    () => orderGradebookRatings(baseRatings, ratingOrderKeys),
+    [baseRatings, ratingOrderKeys],
+  );
+
+  useEffect(() => {
+    const keys = baseRatings.map((rating) => rating.key);
+    setRatingOrderKeys((prev) => {
+      const kept = prev.filter((key) => keys.includes(key));
+      const missing = keys.filter((key) => !kept.includes(key));
+      if (missing.length === 0 && kept.length === prev.length) return prev;
+      return [...kept, ...missing];
+    });
+  }, [baseRatings]);
   const ranges = useMemo(() => collectRanges(matches), [matches]);
 
   useEffect(() => {
@@ -132,16 +195,26 @@ const CourseGrade = () => {
     setMatches(stored?.matches ?? {});
     setHiddenKeys(stored?.hiddenKeys ?? []);
     setAddedRatings(stored?.addedRatings ?? []);
+    setRatingOrderKeys(stored?.ratingOrderKeys ?? []);
     setMatchReady(true);
+    const storedWeights = readStoredWeights(courseId);
+    setWeightOverrides(storedWeights);
+    setWeightDraft(storedWeights);
+    setWeightsReady(true);
   }, [courseId]);
 
   useEffect(() => {
     if (!courseId || !matchReady) return;
     localStorage.setItem(
       MATCH_STORAGE_PREFIX + courseId,
-      JSON.stringify({ scale, matches, hiddenKeys, addedRatings }),
+      JSON.stringify({ scale, matches, hiddenKeys, addedRatings, ratingOrder: ratingOrderKeys }),
     );
-  }, [addedRatings, courseId, hiddenKeys, matchReady, matches, scale]);
+  }, [addedRatings, courseId, hiddenKeys, matchReady, matches, ratingOrderKeys, scale]);
+
+  useEffect(() => {
+    if (!courseId || !weightsReady) return;
+    localStorage.setItem(WEIGHT_STORAGE_PREFIX + courseId, JSON.stringify(weightOverrides));
+  }, [courseId, weightOverrides, weightsReady]);
 
   useEffect(() => {
     if (chartSelection === OVERALL_CHART_VALUE) return;
@@ -159,7 +232,7 @@ const CourseGrade = () => {
     let cancelled = false;
     setRubricDetail(null);
     setRubricLoading(true);
-    fetch(`/api/courses/${courseId}/grades/assignments/${chartSelection}`)
+    fetchWithCanvasAuth(`/api/courses/${courseId}/grades/assignments/${chartSelection}`)
       .then(async (res) => {
         const body = await res.json();
         if (!res.ok) throw new Error(body.error ?? 'Failed to load rubric');
@@ -177,17 +250,17 @@ const CourseGrade = () => {
   }, [courseId, chartSelection]);
 
   const selectedAssessment = useMemo(
-    () => assessments.find((a) => String(a.id) === chartSelection),
-    [assessments, chartSelection],
+    () => weightedAssessments.find((a) => String(a.id) === chartSelection),
+    [chartSelection, weightedAssessments],
   );
 
   const overallLetters = useMemo(
-    () => (scale === 'letter' ? overallLetterCounts(assessments, matches) : null),
-    [assessments, matches, scale],
+    () => (scale === 'letter' ? overallLetterCounts(weightedAssessments, matches) : null),
+    [matches, scale, weightedAssessments],
   );
   const overallPercents = useMemo(
-    () => (scale === 'percent' ? overallPercentCounts(assessments, matches, ranges) : null),
-    [assessments, matches, ranges, scale],
+    () => (scale === 'percent' ? overallPercentCounts(weightedAssessments, matches, ranges) : null),
+    [matches, ranges, scale, weightedAssessments],
   );
 
   const chartModel = useMemo(() => {
@@ -227,14 +300,7 @@ const CourseGrade = () => {
         : 'Grade distribution — Overall (weighted letter from your match)'
       : `Grade distribution — ${selectedAssessment?.name ?? 'Assessment'}`;
 
-  const chartOptions = {
-    responsive: true,
-    maintainAspectRatio: false,
-    plugins: {
-      legend: { position: 'top' as const },
-      title: { display: true, text: chartTitle },
-    },
-  };
+  const chartOptions = barChartOptions(chartTitle, resolvedMode);
 
   if (loading || error) {
     return <TabLoader loading={loading} error={error} />;
@@ -248,7 +314,8 @@ const CourseGrade = () => {
       {
         label: 'Students',
         data: chartModel.counts,
-        backgroundColor: 'rgba(75, 192, 192, 0.6)',
+        backgroundColor: `${chartSeries.primary}${resolvedMode === 'dark' ? 'e6' : 'cc'}`,
+        borderRadius: 6,
         maxBarThickness: 64,
         categoryPercentage: 0.7,
         barPercentage: 0.85,
@@ -402,9 +469,19 @@ const CourseGrade = () => {
             [ratingKey]: { ...emptyMatch(), ...current[ratingKey], ...patch },
           }));
         }}
+        onMoveRating={(activeKey, targetKey) => {
+          setRatingOrderKeys((current) =>
+            reorderRatingKeys(
+              orderGradebookRatings(baseRatings, current).map((rating) => rating.key),
+              activeKey,
+              targetKey,
+            ),
+          );
+        }}
         onRemove={(ratingKey) => {
           setHiddenKeys((current) => (current.includes(ratingKey) ? current : [...current, ratingKey]));
           setAddedRatings((current) => current.filter((rating) => rating.key !== ratingKey));
+          setRatingOrderKeys((current) => current.filter((key) => key !== ratingKey));
           setMatches((current) => {
             if (!(ratingKey in current)) return current;
             const next = { ...current };
@@ -422,12 +499,13 @@ const CourseGrade = () => {
             if (fromCourse || current.some((rating) => rating.key === key)) return current;
             return [...current, { key, label: trimmed, points: null }];
           });
+          setRatingOrderKeys((current) => (current.includes(key) ? current : [...current, key]));
         }}
       />
 
       {chartModel.labels.length > 0 ? (
-        <Box sx={{ position: 'relative', width: '100%', maxWidth: '100%', height: 360 }}>
-          <Bar options={chartOptions} data={chartData} />
+        <Box sx={{ ...chartPanelSx, position: 'relative', width: '100%', maxWidth: '100%', height: 380 }}>
+          <Bar key={resolvedMode} options={chartOptions} data={chartData} />
         </Box>
       ) : (
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
@@ -435,7 +513,7 @@ const CourseGrade = () => {
         </Typography>
       )}
       {chartSelection !== OVERALL_CHART_VALUE ? (
-        <AssignmentRubricPanel detail={rubricDetail} loading={rubricLoading} />
+        <AssignmentRubricPanel detail={rubricDetail} loading={rubricLoading} ratingOrder={ratings} />
       ) : null}
       <Typography variant="caption" display="block" color="text.secondary" sx={{ mt: 1 }}>
         {data.weightingNote}
@@ -446,6 +524,27 @@ const CourseGrade = () => {
         matches={matches}
         criteria={criteria}
         ranges={ranges}
+        weightOverrides={weightOverrides}
+        weightDraft={weightDraft}
+        weightsDirty={weightsDirty}
+        onWeightDraftChange={(assignmentId, value) => {
+          setWeightDraft((current) => {
+            const trimmed = value.trim();
+            if (trimmed === '') {
+              if (!(assignmentId in current)) return current;
+              const next = { ...current };
+              delete next[assignmentId];
+              return next;
+            }
+            return { ...current, [assignmentId]: value };
+          });
+        }}
+        onConfirmWeights={() => {
+          const applied = commitWeightDraft(weightDraft);
+          if (!manualWeightTotalValid(applied)) return;
+          setWeightOverrides(applied);
+          setWeightDraft(applied);
+        }}
       />
       <TabDataSourceFooter
         sources={data.dataSources}
